@@ -1054,20 +1054,84 @@ private struct RaccoonFrameImage: View {
 
 private struct MenuBarRaccoonIcon: View {
     var body: some View {
-        Group {
-            if let image = Self.image() {
-                Image(nsImage: image)
-                    .renderingMode(.original)
-            } else {
-                Image(systemName: "pawprint.fill")
-            }
-        }
-        .frame(width: 18, height: 18)
+        Image(nsImage: MenuBarRaccoonTemplate.image)
+            .renderingMode(.template)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: 22, height: 22)
+            .accessibilityLabel("WhileItThinks")
     }
+}
 
-    private static func image() -> NSImage? {
-        AppIcon.raccoonImage(size: 18)
-    }
+private enum MenuBarRaccoonTemplate {
+    static let image: NSImage = {
+        let image = NSImage(size: NSSize(width: 26, height: 26))
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        let scale: CGFloat = 26 / 24
+        func rect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> NSRect {
+            NSRect(x: x * scale, y: y * scale, width: width * scale, height: height * scale)
+        }
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: x * scale, y: y * scale)
+        }
+
+        NSColor.black.setFill()
+
+        let leftEar = NSBezierPath()
+        leftEar.move(to: point(5.0, 16.0))
+        leftEar.line(to: point(6.4, 22.6))
+        leftEar.line(to: point(10.6, 18.4))
+        leftEar.close()
+        leftEar.fill()
+
+        let rightEar = NSBezierPath()
+        rightEar.move(to: point(19.0, 16.0))
+        rightEar.line(to: point(17.6, 22.6))
+        rightEar.line(to: point(13.4, 18.4))
+        rightEar.close()
+        rightEar.fill()
+
+        NSBezierPath(roundedRect: rect(3.6, 3.1, 16.8, 17.4), xRadius: 8.4 * scale, yRadius: 8.7 * scale).fill()
+        NSBezierPath(roundedRect: rect(5.0, 9.4, 14.0, 6.8), xRadius: 5.0 * scale, yRadius: 3.4 * scale).fill()
+
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.isTemplate = true
+            return image
+        }
+
+        context.setBlendMode(.clear)
+        NSColor.clear.setFill()
+        NSBezierPath(ovalIn: rect(7.2, 11.5, 3.2, 2.8)).fill()
+        NSBezierPath(ovalIn: rect(13.6, 11.5, 3.2, 2.8)).fill()
+        NSBezierPath(ovalIn: rect(8.2, 6.0, 7.6, 5.3)).fill()
+
+        context.setLineCap(.round)
+        context.setLineWidth(1.25 * scale)
+        context.move(to: point(10.4, 17.6))
+        context.addLine(to: point(9.0, 19.9))
+        context.move(to: point(12.0, 17.8))
+        context.addLine(to: point(12.0, 20.7))
+        context.move(to: point(13.6, 17.6))
+        context.addLine(to: point(15.0, 19.9))
+        context.strokePath()
+
+        context.setBlendMode(.normal)
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: rect(10.25, 8.35, 3.5, 2.15), xRadius: 1.05 * scale, yRadius: 1.05 * scale).fill()
+
+        NSColor.black.setStroke()
+        let mouth = NSBezierPath()
+        mouth.lineWidth = 0.9 * scale
+        mouth.move(to: point(12.0, 8.2))
+        mouth.line(to: point(12.0, 7.0))
+        mouth.stroke()
+
+        image.isTemplate = true
+        return image
+    }()
 }
 
 private struct FallbackRaccoonFace: View {
