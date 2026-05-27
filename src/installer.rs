@@ -169,7 +169,7 @@ pub fn status_with_options(
     } else {
         match integration {
             Integration::Claude => {
-                "Ready. Claude Code CLI and Desktop Code tab should pick up these user-level hooks; run /status in Claude if you want to verify active settings.".to_string()
+                "Ready. Claude Code CLI and Desktop Code tab should pick up these user-level hooks. Use normal Claude Code sessions; claude --bare skips hooks. Optional: run /status or /hooks in Claude Code to verify.".to_string()
             }
             Integration::Codex => {
                 "Configured. To trust hooks, open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and approve it once. Codex Desktop does not currently expose /hooks in chat.".to_string()
@@ -205,7 +205,7 @@ fn install_claude(options: &InstallOptions) -> anyhow::Result<InstallReport> {
         config_path: path,
         backup_path: backup,
         installed: true,
-        note: "Claude Code hooks installed for CLI and Desktop Code tab shared user settings."
+        note: "Claude Code hooks installed for CLI and Desktop Code tab shared user settings. No separate Claude trust step is required."
             .to_string(),
     })
 }

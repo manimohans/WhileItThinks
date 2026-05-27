@@ -6,7 +6,8 @@ pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
 2. Enable Claude Code.
    Turn on Claude Code in the app. WhileItThinks merges command hooks into ~/.claude/settings.json and creates a timestamped backup first.
    Claude Code reloads hooks from user settings. This covers Claude Code CLI and the Claude Desktop Code tab when they use the same user configuration.
-   Optional verification: open Claude Code and run /status. Confirm user settings are active.
+   No separate Claude trust step is required. Do not test with claude --bare because bare mode skips hooks.
+   Optional verification: open Claude Code and run /status to confirm user settings are active, or /hooks to inspect the WhileItThinks hook handlers.
 
 3. Enable Codex.
    Turn on Codex in the app. WhileItThinks writes ~/.codex/hooks.json and creates a timestamped backup first.

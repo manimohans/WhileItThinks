@@ -45,7 +45,8 @@ In the app:
 2. Enable Claude Code if you use Claude Code CLI or the Claude Desktop Code tab.
 3. Enable Codex if you use Codex CLI or Codex Desktop.
 4. Allow notifications for completion and approval alerts.
-5. For Codex, open Terminal, run `codex`, type `/hooks` in the Codex CLI, review WhileItThinks, and trust the hooks. Codex Desktop does not currently expose the hook browser command in its chat UI.
+5. For Claude Code, no extra trust step is required. Use a normal Claude Code session, not `claude --bare`, because bare mode skips hooks. Optional verification: run `/status` or `/hooks` in Claude Code.
+6. For Codex, open Terminal, run `codex`, type `/hooks` in the Codex CLI, review WhileItThinks, and trust the hooks. Codex Desktop does not currently expose the hook browser command in its chat UI.
 
 Accessibility is optional. It is only for active-app/fullscreen suppression work; Claude and Codex wait-state detection does not require it.
 
@@ -58,7 +59,7 @@ Current launch scope:
 | Surface | Support | How it is detected |
 | --- | --- | --- |
 | Claude Code CLI | High | User-level hooks in `~/.claude/settings.json` |
-| Claude Desktop Code tab | High | Shared Claude Code settings and hook system |
+| Claude Desktop Code tab | High | Same Claude Code engine, shared settings, and shared hook system |
 | Codex CLI | High | User-level hooks in `~/.codex/hooks.json` |
 | Codex Desktop app | High | Shared Codex agent configuration, after one-time hook trust approval from Codex CLI |
 

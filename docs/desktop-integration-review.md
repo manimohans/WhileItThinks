@@ -23,7 +23,9 @@ The app starts the daemon, requests notifications, offers optional Accessibility
 
 ## Claude Code Compatibility
 
-The installer writes user-level hooks into `~/.claude/settings.json`, preserving existing settings and creating timestamped backups. Claude Code user settings apply across projects. The in-app tutorial tells users to run `/status` in Claude if they want to confirm active settings.
+The installer writes user-level hooks into `~/.claude/settings.json`, preserving existing settings and creating timestamped backups. Claude Code user settings apply across projects. Claude Desktop Code tab sessions use the same Claude Code settings and hook system as the CLI, so this one user-level install covers both surfaces.
+
+Claude Code does not require the separate hook trust step that Codex requires. The in-app tutorial tells users to use normal Claude Code sessions, not `claude --bare`, because bare mode skips hooks. For verification, users can run `/status` to confirm user settings are loaded or `/hooks` to inspect the configured WhileItThinks hook handlers.
 
 Installed Claude events:
 
