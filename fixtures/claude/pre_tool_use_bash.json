@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "claude-session-1",
+  "cwd": "/Users/mani/src/private-app",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pytest tests/test_private_customer.py --token secret"
+  }
+}

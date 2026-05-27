@@ -1,0 +1,7 @@
+/target/
+/dist/
+/macos/.build/
+/macos/.swiftpm/
+__pycache__/
+*.pyc
+.DS_Store

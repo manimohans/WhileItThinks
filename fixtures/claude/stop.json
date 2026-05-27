@@ -1,0 +1,5 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "claude-session-1",
+  "cwd": "/Users/mani/src/private-app"
+}

@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "codex-session-1",
+  "cwd": "/Users/mani/src/secret-codex-app",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pnpm test -- --grep private"
+  },
+  "exit_code": 0,
+  "duration_ms": 9000
+}

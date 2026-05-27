@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "PermissionRequest",
+  "session_id": "codex-session-1",
+  "cwd": "/Users/mani/src/secret-codex-app",
+  "tool_name": "Bash"
+}

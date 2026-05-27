@@ -1,0 +1,24 @@
+pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
+
+1. Keep WhileItThinks open.
+   The app starts the local event daemon. Claude Code and Codex hooks send local-only events to it.
+
+2. Enable Claude Code.
+   Turn on Claude Code in the app. WhileItThinks merges command hooks into ~/.claude/settings.json and creates a timestamped backup first.
+   Claude Code reloads hooks from user settings. This covers Claude Code CLI and the Claude Desktop Code tab when they use the same user configuration.
+   Optional verification: open Claude Code and run /status. Confirm user settings are active.
+
+3. Enable Codex.
+   Turn on Codex in the app. WhileItThinks writes ~/.codex/hooks.json and creates a timestamped backup first.
+   Required manual trust step: open Codex, run /hooks, review WhileItThinks, and trust the command hooks. Codex will skip non-managed hooks until this is done.
+   This covers Codex CLI and Codex Desktop app agents because app agents inherit the same configuration as the IDE and CLI extension.
+
+4. Allow notifications.
+   Notifications are used for completion and permission-request alerts. No account or cloud sync is used.
+
+5. Accessibility is optional.
+   Enable Accessibility only if you want smart active-app/fullscreen suppression later. Claude/Codex hook ingestion does not require it.
+
+Privacy defaults:
+WhileItThinks stores sanitized local metadata only: source, event kind, duration, exit code, command category, and hashed project/session identifiers. It does not store prompts, assistant text, file contents, shell output, or raw command arguments by default.
+"#;

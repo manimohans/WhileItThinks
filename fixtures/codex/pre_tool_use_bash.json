@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "codex-session-1",
+  "cwd": "/Users/mani/src/secret-codex-app",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pnpm test -- --grep private"
+  }
+}

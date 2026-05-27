@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "Notification",
+  "session_id": "claude-session-1",
+  "cwd": "/Users/mani/src/private-app",
+  "notification_type": "permission_prompt"
+}
