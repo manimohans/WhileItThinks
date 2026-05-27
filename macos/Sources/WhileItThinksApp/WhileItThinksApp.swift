@@ -144,11 +144,12 @@ final class AppModel: ObservableObject {
     @Published var daemonStatus = "Not running"
     @Published var daemonDetail = "Click Start Daemon to launch the local event receiver."
     @Published var notificationStatus = "Not requested"
-    @Published var accessibilityStatus = AXIsProcessTrusted() ? "Enabled" : "Optional, not enabled"
+    @Published var accessibilityStatus = AppModel.accessibilityTrustStatus()
     @Published var launchAtLoginStatus = "Not configured"
     @Published var lastOutput = ""
     @Published var lastEventSummary = "No Claude or Codex hook event received since the app opened."
     @Published var lastActionSummary = "Hooks are event-driven. Nothing runs every 8 seconds."
+    @Published var codexTrustAcknowledged = UserDefaults.standard.bool(forKey: "codexHooks.trustAcknowledged")
     @Published var aiOverlayDelaySeconds = OverlayTimingDefaults.aiDelay
     @Published var workOverlayDelaySeconds = OverlayTimingDefaults.workDelay
     @Published var commandOverlayDelaySeconds = OverlayTimingDefaults.commandDelay
@@ -161,6 +162,7 @@ final class AppModel: ObservableObject {
     private var actionLogOffset: UInt64 = 0
     private var actionLogWatcher: Task<Void, Never>?
     private var accessibilityWatcher: Task<Void, Never>?
+    private var activationObserver: NSObjectProtocol?
     private var seenActionIDs = Set<String>()
     private var pendingOverlayTasks: [String: Task<Void, Never>] = [:]
     private var pendingOverlayStates: [String: String] = [:]
@@ -173,6 +175,15 @@ final class AppModel: ObservableObject {
         workOverlayDelaySeconds = Self.storedTiming(for: .workDelay)
         commandOverlayDelaySeconds = Self.storedTiming(for: .commandDelay)
         overlayCooldownSeconds = Self.storedTiming(for: .cooldown)
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.syncAccessibilityStatus()
+            }
+        }
     }
 
     var bundleDirectory: URL {
@@ -181,6 +192,16 @@ final class AppModel: ObservableObject {
 
     var overlayTimingDescription: String {
         "AI \(formattedDuration(aiOverlayDelaySeconds)), build/test/install \(formattedDuration(workOverlayDelaySeconds)), generic command \(formattedDuration(commandOverlayDelaySeconds)), cooldown \(formattedDuration(overlayCooldownSeconds))."
+    }
+
+    var codexTrustStatusText: String {
+        if !codexInstalled {
+            return "Not installed"
+        }
+        if !codexConfigured {
+            return "Needs repair"
+        }
+        return codexTrustAcknowledged ? "Marked trusted" : "Needs Codex approval"
     }
 
     var isRunningFromApplications: Bool {
@@ -284,6 +305,9 @@ final class AppModel: ObservableObject {
         let command = enabled ? "install" : "uninstall"
         let result = await runCLI(["--hook-path", hookPath, command, integration.rawValue])
         lastOutput = result.display
+        if integration == .codex {
+            setCodexTrustAcknowledged(false)
+        }
         await refreshStatus()
     }
 
@@ -379,7 +403,7 @@ final class AppModel: ObservableObject {
     func requestAccessibility() {
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
-        accessibilityStatus = trusted ? "Enabled" : "Waiting for System Settings approval"
+        accessibilityStatus = trusted ? "Granted" : "Waiting for approval"
         startAccessibilityWatcher()
         openAccessibilitySettings()
     }
@@ -388,6 +412,11 @@ final class AppModel: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func setCodexTrustAcknowledged(_ acknowledged: Bool) {
+        codexTrustAcknowledged = acknowledged
+        UserDefaults.standard.set(acknowledged, forKey: "codexHooks.trustAcknowledged")
     }
 
     func configureLaunchAtLogin(_ enabled: Bool) {
@@ -456,7 +485,12 @@ final class AppModel: ObservableObject {
     }
 
     private func syncAccessibilityStatus() {
-        accessibilityStatus = AXIsProcessTrusted() ? "Enabled" : "Optional, not enabled"
+        accessibilityStatus = Self.accessibilityTrustStatus()
+    }
+
+    private static func accessibilityTrustStatus() -> String {
+        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options) ? "Granted" : "Not granted"
     }
 
     private func startAccessibilityWatcher() {
@@ -480,18 +514,50 @@ final class AppModel: ObservableObject {
         for item in items {
             guard let integration = item["integration"] as? String else { continue }
             let installed = item["installed"] as? Bool ?? false
-            let note = item["note"] as? String ?? ""
             if integration == "claude" {
                 claudeInstalled = installed
                 claudeConfigured = item["configured"] as? Bool ?? false
-                claudeNote = note
+                claudeNote = integrationNextStep(.claude, item: item)
                 claudeHookSummary = hookSummary(item)
             } else if integration == "codex" {
                 codexInstalled = installed
                 codexConfigured = item["configured"] as? Bool ?? false
-                codexNote = note
+                if !codexConfigured {
+                    setCodexTrustAcknowledged(false)
+                }
+                codexNote = integrationNextStep(.codex, item: item)
                 codexHookSummary = hookSummary(item)
             }
+        }
+    }
+
+    private func integrationNextStep(_ integration: Integration, item: [String: Any]) -> String {
+        let installed = item["installed"] as? Bool ?? false
+        let configured = item["configured"] as? Bool ?? false
+        let pathExists = item["expected_hook_path_exists"] as? Bool ?? false
+        let stalePaths = item["stale_hook_paths"] as? [String] ?? []
+        let missingEvents = item["missing_events"] as? [String] ?? []
+
+        if !installed {
+            return "Turn this on to install hooks."
+        }
+        if !stalePaths.isEmpty {
+            return "Hooks point at an old app copy. Toggle off and on to repair."
+        }
+        if !pathExists {
+            return "Hook binary missing. Reinstall the app in /Applications."
+        }
+        if !missingEvents.isEmpty || !configured {
+            return "Hooks are incomplete. Toggle off and on to repair."
+        }
+
+        switch integration {
+        case .claude:
+            return "Ready."
+        case .codex:
+            return codexTrustAcknowledged
+                ? "Ready."
+                : "Open Codex CLI, run /hooks, approve WhileItThinks, then mark it done here."
         }
     }
 
@@ -501,6 +567,10 @@ final class AppModel: ObservableObject {
         let configured = item["configured"] as? Bool ?? false
         let pathExists = item["expected_hook_path_exists"] as? Bool ?? false
         let stalePaths = item["stale_hook_paths"] as? [String] ?? []
+        let integration = item["integration"] as? String ?? ""
+        if integration == "codex", configured, !codexTrustAcknowledged {
+            return "Needs trust"
+        }
         if configured {
             return "Ready (\(installed)/\(expected) hooks)"
         }
@@ -1221,6 +1291,7 @@ private struct SidebarButton: View {
 }
 
 private struct SidebarStatus: View {
+    @EnvironmentObject private var model: AppModel
     let title: String
     let value: String
     let tone: Tone
@@ -1238,6 +1309,19 @@ private struct SidebarStatus: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                     .foregroundStyle(AppTheme.ink)
+                Spacer()
+                if title == "Daemon" {
+                    Button {
+                        Task { await model.restartDaemonFromApp() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.green)
+                    .disabled(model.isDaemonStarting)
+                    .help("Restart daemon")
+                }
             }
         }
         .padding(12)
@@ -1300,22 +1384,16 @@ private struct MenuBarView: View {
 private struct SetupView: View {
     @EnvironmentObject private var model: AppModel
 
-    private let grid = [
-        GridItem(.adaptive(minimum: 178), spacing: 12)
-    ]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HeroPanel()
 
-            LazyVGrid(columns: grid, spacing: 12) {
-                StatusPill(title: "Daemon", value: model.daemonStatus, tone: model.daemonStatus.contains("Running") ? .good : .warning)
-                StatusPill(title: "Notifications", value: model.notificationStatus, tone: model.notificationStatus == "Enabled" ? .good : .neutral)
-                StatusPill(title: "Accessibility", value: model.accessibilityStatus, tone: model.accessibilityStatus == "Enabled" ? .good : .neutral)
-            }
+            PermissionStatusStrip()
 
             InfoBand(text: model.installLocationMessage, systemImage: model.isRunningFromApplications ? "checkmark.seal.fill" : "exclamationmark.triangle.fill", tone: model.isRunningFromApplications ? .good : .warning)
-            InfoBand(text: model.daemonDetail, systemImage: model.daemonStatus.contains("Running") ? "checkmark.circle.fill" : "info.circle.fill", tone: model.daemonStatus.contains("Running") ? .good : .neutral)
+            if !model.daemonStatus.contains("Running") {
+                InfoBand(text: model.daemonDetail, systemImage: "info.circle.fill", tone: .neutral)
+            }
 
             SectionTitle("Integrations", subtitle: "Enable user-level hooks for Claude Code and Codex. Existing config is backed up and merged.")
 
@@ -1342,7 +1420,6 @@ private struct SetupView: View {
             }
 
             TriggerStatusCard()
-            ActionBar()
         }
     }
 }
@@ -1377,71 +1454,88 @@ private struct HeroPanel: View {
     }
 }
 
-private struct ActionBar: View {
+private struct PermissionStatusStrip: View {
     @EnvironmentObject private var model: AppModel
-    private let columns = [
-        GridItem(.adaptive(minimum: 138), spacing: 10)
-    ]
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-            ActionBarButton(
-                title: model.daemonStatus.contains("Running") ? "Daemon" : (model.isDaemonStarting ? "Starting" : "Start"),
-                systemImage: model.daemonStatus.contains("Running") ? "checkmark.circle.fill" : "bolt.circle.fill",
-                tone: .good,
-                help: model.daemonStatus.contains("Running") ? "Daemon is running" : "Start local daemon",
-                disabled: model.isDaemonStarting
+        HStack(spacing: 12) {
+            PermissionStatusCard(
+                title: "Notifications",
+                value: model.notificationStatus,
+                tone: model.notificationStatus == "Enabled" ? .good : .neutral,
+                actionTitle: model.notificationStatus == "Enabled" ? nil : "Allow",
+                actionIcon: "bell.badge.fill"
             ) {
-                Task { await model.ensureDaemonRunning() }
-            }
-
-            ActionBarButton(title: "Restart", systemImage: "arrow.clockwise.circle.fill", tone: .neutral, help: "Restart local daemon", disabled: model.isDaemonStarting) {
-                Task { await model.restartDaemonFromApp() }
-            }
-
-            ActionBarButton(title: "Notify", systemImage: "bell.badge.fill", tone: .neutral, help: "Request notification permission") {
                 Task { await model.requestNotifications() }
             }
 
-            ActionBarButton(
-                title: model.accessibilityStatus == "Enabled" ? "Access On" : "Accessibility",
-                systemImage: "hand.raised.fill",
-                tone: model.accessibilityStatus == "Enabled" ? .good : .warning,
-                help: "Open Accessibility settings"
+            PermissionStatusCard(
+                title: "Accessibility",
+                value: model.accessibilityStatus,
+                tone: model.accessibilityStatus == "Granted" ? .good : .neutral,
+                actionTitle: model.accessibilityStatus == "Granted" ? "Open" : "Grant",
+                actionIcon: "hand.raised.fill"
             ) {
                 model.requestAccessibility()
             }
-
-            ActionBarButton(title: "Refresh", systemImage: "arrow.clockwise", tone: .neutral, help: "Refresh integration status") {
-                Task { await model.refreshAll() }
-            }
         }
-        .padding(.top, 2)
     }
 }
 
-private struct ActionBarButton: View {
+private struct PermissionStatusCard: View {
     let title: String
-    let systemImage: String
+    let value: String
     let tone: Tone
-    let help: String
+    var actionTitle: String?
+    var actionIcon: String?
     var disabled = false
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label {
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            } icon: {
-                Image(systemName: systemImage)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(tone.color)
+                    .frame(width: 8, height: 8)
+                Text(title.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(AppTheme.muted)
+                Spacer()
+                if let actionTitle, let actionIcon {
+                    Button(action: action) {
+                        Label(actionTitle, systemImage: actionIcon)
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(CompactButtonStyle(tone: tone))
+                    .disabled(disabled)
+                }
             }
-            .frame(maxWidth: .infinity, minHeight: 48)
+
+            Text(value)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(AppTheme.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.86)
         }
-        .buttonStyle(TonalButtonStyle(tone: tone))
-        .disabled(disabled)
-        .help(help)
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
+    }
+}
+
+private struct CompactButtonStyle: ButtonStyle {
+    let tone: Tone
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(tone.color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(tone.color.opacity(configuration.isPressed ? 0.16 : 0.09))
+            .clipShape(Capsule())
     }
 }
 
@@ -1508,6 +1602,7 @@ private struct TriggerLine: View {
 }
 
 private struct IntegrationRow: View {
+    @EnvironmentObject private var model: AppModel
     let integration: Integration
     let enabled: Bool
     let configured: Bool
@@ -1517,6 +1612,9 @@ private struct IntegrationRow: View {
     let onChange: @Sendable (Bool) -> Void
 
     private var tone: Tone {
+        if integration == .codex, configured, !model.codexTrustAcknowledged {
+            return .warning
+        }
         if configured { return .good }
         if enabled { return .warning }
         return .neutral
@@ -1540,6 +1638,16 @@ private struct IntegrationRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                if integration == .codex, configured, !model.codexTrustAcknowledged {
+                    Button {
+                        model.setCodexTrustAcknowledged(true)
+                        model.codexNote = "Ready."
+                        model.codexHookSummary = "Ready"
+                    } label: {
+                        Label("I approved this in Codex", systemImage: "checkmark.circle.fill")
+                    }
+                    .buttonStyle(CompactButtonStyle(tone: .good))
+                }
             }
 
             Spacer(minLength: 20)
@@ -1562,7 +1670,7 @@ private struct TutorialView: View {
         VStack(alignment: .leading, spacing: 16) {
             Header(title: "Setup Tutorial", subtitle: "Enable Claude Code and Codex hooks, then approve the one Codex trust step.")
             TutorialStep(number: "1", title: "Put the app in Applications", text: "Keep WhileItThinks.app in /Applications before enabling hooks. Claude and Codex store an absolute path to the bundled hook binary.")
-            TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required. Do not test with claude --bare because bare mode skips hooks. Optional: run /status or /hooks in Claude Code to verify.")
+            TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
             TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
             TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for completion and permission alerts. The daemon and hooks work without cloud services.")
             TutorialStep(number: "5", title: "Accessibility is optional", text: "Use it only for active-app/fullscreen suppression. Hook-based Claude and Codex detection does not require Accessibility.")
@@ -1866,35 +1974,6 @@ private struct InfoBand: View {
         .background(tone.color.opacity(0.09))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(tone.color.opacity(0.18), lineWidth: 1))
-    }
-}
-
-private struct StatusPill: View {
-    let title: String
-    let value: String
-    let tone: Tone
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(tone.color)
-                    .frame(width: 8, height: 8)
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(AppTheme.muted)
-            }
-            Text(value)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(AppTheme.ink)
-                .lineLimit(2)
-                .minimumScaleFactor(0.86)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
-        .background(Color.white.opacity(0.76))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
     }
 }
 

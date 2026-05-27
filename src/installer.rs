@@ -169,10 +169,10 @@ pub fn status_with_options(
     } else {
         match integration {
             Integration::Claude => {
-                "Ready. Claude Code CLI and Desktop Code tab should pick up these user-level hooks. Use normal Claude Code sessions; claude --bare skips hooks. Optional: run /status or /hooks in Claude Code to verify.".to_string()
+                "Ready. Claude Code CLI and Desktop Code tab can send hooks through shared user settings.".to_string()
             }
             Integration::Codex => {
-                "Configured. To trust hooks, open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and approve it once. Codex Desktop does not currently expose /hooks in chat.".to_string()
+                "Configured. Codex requires one approval in the CLI /hooks screen before command hooks run.".to_string()
             }
         }
     };
