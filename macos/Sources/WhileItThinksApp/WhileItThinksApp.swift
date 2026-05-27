@@ -117,6 +117,10 @@ final class AppModel: ObservableObject {
     private var actionLogWatcher: Task<Void, Never>?
     private var accessibilityWatcher: Task<Void, Never>?
     private var seenActionIDs = Set<String>()
+    private var pendingOverlayTasks: [String: Task<Void, Never>] = [:]
+    private var pendingOverlayStates: [String: String] = [:]
+    private var visibleOverlayKey: String?
+    private var overlayCooldownUntil = Date.distantPast
     private let overlayPresenter = OverlayPresenter()
 
     var bundleDirectory: URL {
@@ -293,11 +297,22 @@ final class AppModel: ObservableObject {
     }
 
     func sendTestClaudeEvent() async {
-        await sendSyntheticShellEvent(source: "claude-code", label: "Claude shell", command: "sleep 12")
+        await sendSyntheticShellEvent(source: "claude-code", label: "Claude shell", command: "sleep 12", simulatedSeconds: 11)
     }
 
     func sendTestCodexEvent() async {
-        await sendSyntheticShellEvent(source: "codex", label: "Codex test", command: "pnpm test")
+        await sendSyntheticShellEvent(source: "codex", label: "Codex test", command: "pnpm test", simulatedSeconds: 6)
+    }
+
+    func sendTestAiGenerationEvent() async {
+        await ensureDaemonRunning()
+        lastActionSummary = "Synthetic AI generation started. Overlay appears after 6 seconds if it is still running."
+        let start = await runCLI(["test-event", "--source", "claude-code", "--event", "agent_started", "--command", ""])
+        lastOutput = start.display
+        try? await Task.sleep(nanoseconds: 7_000_000_000)
+        let finish = await runCLI(["test-event", "--source", "claude-code", "--event", "agent_stopped", "--command", ""])
+        lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
+        postNotification(title: "WhileItThinks test", body: "Synthetic AI generation completed.")
     }
 
     func sendTestPermissionEvent() async {
@@ -307,15 +322,14 @@ final class AppModel: ObservableObject {
         postNotification(title: "WhileItThinks test", body: "Synthetic permission event sent.")
     }
 
-    private func sendSyntheticShellEvent(source: String, label: String, command: String) async {
+    private func sendSyntheticShellEvent(source: String, label: String, command: String, simulatedSeconds: UInt64) async {
         await ensureDaemonRunning()
-        overlayPresenter.show(message: "\(label) started")
+        lastActionSummary = "\(label) synthetic start sent. Waiting long enough to cross the overlay threshold."
         let start = await runCLI(["test-event", "--source", source, "--event", "shell_started", "--command", command])
         lastOutput = start.display
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        try? await Task.sleep(nanoseconds: simulatedSeconds * 1_000_000_000)
         let finish = await runCLI(["test-event", "--source", source, "--event", "shell_finished", "--command", command])
         lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
-        overlayPresenter.hide()
         postNotification(title: "WhileItThinks test", body: "\(label) completed.")
     }
 
@@ -431,9 +445,9 @@ final class AppModel: ObservableObject {
         lastOutput = line
 
         if kind == "started" {
-            overlayPresenter.show(message: message)
+            scheduleOverlayIfStillWaiting(json: json, action: action, message: message)
         } else if kind == "finished" {
-            overlayPresenter.hide()
+            finishOverlay(json: json)
             postNotification(title: "WhileItThinks", body: message)
         } else if kind == "permission" {
             postNotification(title: "Approval needed", body: message)
@@ -500,6 +514,97 @@ final class AppModel: ObservableObject {
 
         lastEventSummary = parts.joined(separator: " -> ")
         lastActionSummary = message
+    }
+
+    private func scheduleOverlayIfStillWaiting(json: [String: Any], action: [String: Any], message: String) {
+        let key = overlayKey(json: json)
+        let waitState = action["wait_state"] as? String ?? "unknown"
+        let delay = overlayDelaySeconds(for: waitState)
+
+        if pendingOverlayStates[key] == waitState {
+            return
+        }
+
+        pendingOverlayTasks[key]?.cancel()
+        pendingOverlayStates[key] = waitState
+
+        pendingOverlayTasks[key] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                guard let self else { return }
+                self.pendingOverlayTasks[key] = nil
+                self.pendingOverlayStates[key] = nil
+
+                guard Date() >= self.overlayCooldownUntil else {
+                    self.lastActionSummary = "Overlay suppressed by cooldown; event was still recorded."
+                    return
+                }
+                self.visibleOverlayKey = key
+                self.overlayCooldownUntil = Date().addingTimeInterval(120)
+                self.overlayPresenter.show(message: self.overlayCopy(for: waitState, fallback: message))
+            }
+        }
+    }
+
+    private func finishOverlay(json: [String: Any]) {
+        let key = overlayKey(json: json)
+        pendingOverlayTasks[key]?.cancel()
+        pendingOverlayTasks[key] = nil
+        pendingOverlayStates[key] = nil
+
+        if visibleOverlayKey == key {
+            overlayPresenter.hide()
+            visibleOverlayKey = nil
+        }
+    }
+
+    private func overlayKey(json: [String: Any]) -> String {
+        guard let sanitized = json["sanitized"] as? [String: Any] else {
+            return "unknown"
+        }
+        if let session = sanitized["session_hash"] as? String, !session.isEmpty {
+            return "session:\(session)"
+        }
+        if let cwd = sanitized["cwd_hash"] as? String, !cwd.isEmpty {
+            return "cwd:\(cwd)"
+        }
+        let source = sanitized["source"] as? String ?? "unknown"
+        let surface = sanitized["surface"] as? String ?? "unknown"
+        return "\(source):\(surface)"
+    }
+
+    private func overlayDelaySeconds(for waitState: String) -> Double {
+        switch waitState {
+        case "build_running", "test_running", "package_installing", "docker_running", "xcode_building":
+            return 5
+        case "command_running":
+            return 10
+        case "ai_generating", "agent_running_tools":
+            return 6
+        default:
+            return 6
+        }
+    }
+
+    private func overlayCopy(for waitState: String, fallback: String) -> String {
+        switch waitState {
+        case "ai_generating":
+            return "AI is still thinking"
+        case "test_running":
+            return "Tests are still running"
+        case "build_running", "xcode_building":
+            return "Build is still running"
+        case "package_installing":
+            return "Install is still running"
+        case "docker_running":
+            return "Docker is still working"
+        case "agent_running_tools":
+            return "Agent tools are still running"
+        default:
+            return fallback
+        }
     }
 
     private func postNotification(title: String, body: String) {
@@ -1257,6 +1362,7 @@ private struct TriggerStatusCard: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 TriggerLine(icon: "checkmark.circle.fill", text: "Triggers when Claude Code or Codex submits a prompt, starts a Bash/tool call, requests approval, or finishes work.", tone: .good)
+                TriggerLine(icon: "sparkles", text: "Non-tool waits are covered: prompt submit starts AI generation, and Stop ends it.", tone: .good)
                 TriggerLine(icon: "timer", text: "Long waits to try: sleep 12, pnpm test, npm run build, cargo test, xcodebuild, docker build.", tone: .neutral)
                 TriggerLine(icon: "minus.circle.fill", text: "Manual Terminal commands are not watched yet; they need the future shell fallback integration.", tone: .warning)
             }
@@ -1373,6 +1479,14 @@ private struct DiagnosticsView: View {
             Header(title: "Diagnostics", subtitle: "Local smoke checks for the bundled daemon, hook, and installer.")
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                Button {
+                    Task { await model.sendTestAiGenerationEvent() }
+                } label: {
+                    Label("AI Generate", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(TonalButtonStyle(tone: .good))
+
                 Button {
                     Task { await model.sendTestClaudeEvent() }
                 } label: {

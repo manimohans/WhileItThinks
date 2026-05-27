@@ -58,6 +58,20 @@ fn claude_bash_payload_maps_to_shell_events() {
 
 #[test]
 fn claude_permission_and_stop_map_to_control_events() {
+    let prompt = map(
+        Source::ClaudeCode,
+        "UserPromptSubmit",
+        serde_json::json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "claude-session-1",
+            "cwd": "/tmp/project",
+            "prompt": "Think for a while without using tools"
+        }),
+    );
+    assert_eq!(prompt.len(), 2);
+    assert_eq!(prompt[0].kind, EventKind::PromptSubmitted);
+    assert_eq!(prompt[1].kind, EventKind::AgentStarted);
+
     let permission = map(
         Source::ClaudeCode,
         "Notification",
@@ -165,6 +179,43 @@ fn runtime_persists_sanitized_event_and_wait_action() {
     );
     assert_eq!(result.action.kind, WaitActionKind::Started);
     assert_eq!(result.action.wait_state, Some(WaitState::TestRunning));
+}
+
+#[test]
+fn runtime_tracks_non_tool_ai_generation_waits() {
+    let store = EventStore::in_memory().unwrap();
+    let mut runtime = EventRuntime::new(store);
+    let mut events = map(
+        Source::ClaudeCode,
+        "UserPromptSubmit",
+        serde_json::json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "claude-session-2",
+            "cwd": "/tmp/project",
+            "prompt": "Explain the architecture without tools"
+        }),
+    );
+
+    let started = runtime.handle_event(events.remove(0)).unwrap();
+    assert_eq!(started.action.kind, WaitActionKind::Started);
+    assert_eq!(started.action.wait_state, Some(WaitState::AiGenerating));
+
+    let stopped = runtime
+        .handle_event(
+            map(
+                Source::ClaudeCode,
+                "Stop",
+                serde_json::json!({
+                    "hook_event_name": "Stop",
+                    "session_id": "claude-session-2",
+                    "cwd": "/tmp/project"
+                }),
+            )
+            .remove(0),
+        )
+        .unwrap();
+    assert_eq!(stopped.action.kind, WaitActionKind::Finished);
+    assert_eq!(stopped.action.wait_state, Some(WaitState::AiGenerating));
 }
 
 #[test]
