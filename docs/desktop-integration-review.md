@@ -38,7 +38,7 @@ Installed Claude events:
 
 ## Codex Compatibility
 
-The installer writes `~/.codex/hooks.json` and does not modify `~/.codex/config.toml`. Codex discovers hooks from `hooks.json` next to active config layers. Non-managed command hooks require review and trust, so the app and CLI both explicitly instruct the user to run `/hooks` and trust WhileItThinks.
+The installer writes `~/.codex/hooks.json` and does not modify `~/.codex/config.toml`. Codex discovers hooks from `hooks.json` next to active config layers. Non-managed command hooks require review and trust. Codex Desktop does not currently expose the hook browser in its chat UI, so the app and CLI instruct the user to run `codex` in Terminal, type `/hooks` in the Codex CLI, and trust WhileItThinks there once.
 
 Installed Codex events:
 

@@ -172,7 +172,7 @@ pub fn status_with_options(
                 "Ready. Claude Code CLI and Desktop Code tab should pick up these user-level hooks; run /status in Claude if you want to verify active settings.".to_string()
             }
             Integration::Codex => {
-                "Configured. Open Codex, run /hooks, review WhileItThinks, and trust the hooks if you have not already.".to_string()
+                "Configured. To trust hooks, open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and approve it once. Codex Desktop does not currently expose /hooks in chat.".to_string()
             }
         }
     };
@@ -221,8 +221,9 @@ fn install_codex(options: &InstallOptions) -> anyhow::Result<InstallReport> {
         config_path: path,
         backup_path: backup,
         installed: true,
-        note: "Codex hooks installed. The user must approve WhileItThinks in Codex /hooks."
-            .to_string(),
+        note:
+            "Codex hooks installed. The user must approve WhileItThinks once from Codex CLI /hooks."
+                .to_string(),
     })
 }
 

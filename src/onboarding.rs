@@ -10,7 +10,7 @@ pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
 
 3. Enable Codex.
    Turn on Codex in the app. WhileItThinks writes ~/.codex/hooks.json and creates a timestamped backup first.
-   Required manual trust step: open Codex, run /hooks, review WhileItThinks, and trust the command hooks. Codex will skip non-managed hooks until this is done.
+   Required manual trust step: open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks. Codex Desktop does not currently expose /hooks in chat. Codex will skip non-managed hooks until this is done.
    This covers Codex CLI and Codex Desktop app agents because app agents inherit the same configuration as the IDE and CLI extension.
 
 4. Allow notifications.

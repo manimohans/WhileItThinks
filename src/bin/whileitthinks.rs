@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             }
             if matches!(target, Target::All | Target::Codex) {
-                println!("Codex trust step: open Codex, run /hooks, and approve WhileItThinks.");
+                println!("Codex trust step: open Terminal, run codex, type /hooks in the Codex CLI, and approve WhileItThinks. Codex Desktop does not currently expose /hooks in chat.");
             }
         }
         Command::Uninstall { target } => {

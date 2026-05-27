@@ -85,7 +85,7 @@ enum Integration: String, CaseIterable, Identifiable {
         case .claude:
             return "Covers Claude Code CLI and the Claude Desktop Code tab through user settings."
         case .codex:
-            return "Covers Codex CLI and Codex Desktop app after you approve hooks in /hooks."
+            return "Covers Codex CLI and Codex Desktop after one-time hook approval from Codex CLI."
         }
     }
 }
@@ -1229,7 +1229,7 @@ private struct TutorialView: View {
             Header(title: "Setup Tutorial", subtitle: "Enable Claude Code and Codex hooks, then approve the one Codex trust step.")
             TutorialStep(number: "1", title: "Put the app in Applications", text: "Keep WhileItThinks.app in /Applications before enabling hooks. Claude and Codex store an absolute path to the bundled hook binary.")
             TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings.")
-            TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Codex, run /hooks, review WhileItThinks, and trust the command hooks.")
+            TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
             TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for completion and permission alerts. The daemon and hooks work without cloud services.")
             TutorialStep(number: "5", title: "Accessibility is optional", text: "Use it only for active-app/fullscreen suppression. Hook-based Claude and Codex detection does not require Accessibility.")
         }
