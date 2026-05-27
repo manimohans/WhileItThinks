@@ -106,6 +106,8 @@ final class AppModel: ObservableObject {
     @Published var accessibilityStatus = AXIsProcessTrusted() ? "Enabled" : "Optional, not enabled"
     @Published var launchAtLoginStatus = "Not configured"
     @Published var lastOutput = ""
+    @Published var lastEventSummary = "No Claude or Codex hook event received since the app opened."
+    @Published var lastActionSummary = "Hooks are event-driven. Nothing runs every 8 seconds."
     @Published var isBusy = false
     @Published var isDaemonStarting = false
 
@@ -291,27 +293,30 @@ final class AppModel: ObservableObject {
     }
 
     func sendTestClaudeEvent() async {
-        await ensureDaemonRunning()
-        overlayPresenter.show(message: "Claude test is thinking")
-        let start = await runCLI(["test-event", "--source", "claude-code", "--event", "PreToolUse", "--command", "sleep 8"])
-        lastOutput = start.display
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        let finish = await runCLI(["test-event", "--source", "claude-code", "--event", "PostToolUse", "--command", "sleep 8"])
-        lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
-        overlayPresenter.hide()
-        postNotification(title: "WhileItThinks test", body: "Claude test completed.")
+        await sendSyntheticShellEvent(source: "claude-code", label: "Claude shell", command: "sleep 12")
     }
 
     func sendTestCodexEvent() async {
+        await sendSyntheticShellEvent(source: "codex", label: "Codex test", command: "pnpm test")
+    }
+
+    func sendTestPermissionEvent() async {
         await ensureDaemonRunning()
-        overlayPresenter.show(message: "Codex test is thinking")
-        let start = await runCLI(["test-event", "--source", "codex", "--event", "PreToolUse", "--command", "pnpm test"])
+        let claude = await runCLI(["test-event", "--source", "claude-code", "--event", "permission_requested", "--command", ""])
+        lastOutput = claude.display
+        postNotification(title: "WhileItThinks test", body: "Synthetic permission event sent.")
+    }
+
+    private func sendSyntheticShellEvent(source: String, label: String, command: String) async {
+        await ensureDaemonRunning()
+        overlayPresenter.show(message: "\(label) started")
+        let start = await runCLI(["test-event", "--source", source, "--event", "shell_started", "--command", command])
         lastOutput = start.display
         try? await Task.sleep(nanoseconds: 2_000_000_000)
-        let finish = await runCLI(["test-event", "--source", "codex", "--event", "PostToolUse", "--command", "pnpm test"])
+        let finish = await runCLI(["test-event", "--source", source, "--event", "shell_finished", "--command", command])
         lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
         overlayPresenter.hide()
-        postNotification(title: "WhileItThinks test", body: "Codex test completed.")
+        postNotification(title: "WhileItThinks test", body: "\(label) completed.")
     }
 
     private func refreshNotificationStatus() async {
@@ -422,6 +427,7 @@ final class AppModel: ObservableObject {
 
         let kind = action["kind"] as? String ?? "none"
         let message = action["message"] as? String ?? "WhileItThinks event"
+        updateLastEventSummary(json: json, action: action, message: message)
         lastOutput = line
 
         if kind == "started" {
@@ -469,6 +475,31 @@ final class AppModel: ObservableObject {
         } catch {
             return
         }
+    }
+
+    private func updateLastEventSummary(json: [String: Any], action: [String: Any], message: String) {
+        guard let sanitized = json["sanitized"] as? [String: Any] else {
+            lastEventSummary = message
+            lastActionSummary = message
+            return
+        }
+
+        let source = sanitized["source"] as? String ?? "unknown"
+        let event = sanitized["raw_event_name"] as? String ?? sanitized["kind"] as? String ?? "event"
+        let kind = sanitized["kind"] as? String ?? "event"
+        let command = sanitized["command_summary"] as? String
+        let waitState = action["wait_state"] as? String
+
+        var parts = ["\(source) \(event)", kind]
+        if let command, !command.isEmpty {
+            parts.append(command)
+        }
+        if let waitState, !waitState.isEmpty {
+            parts.append(waitState)
+        }
+
+        lastEventSummary = parts.joined(separator: " -> ")
+        lastActionSummary = message
     }
 
     private func postNotification(title: String, body: String) {
@@ -1092,6 +1123,7 @@ private struct SetupView: View {
                 Task { await model.setIntegration(.codex, enabled: enabled) }
             }
 
+            TriggerStatusCard()
             ActionBar()
         }
     }
@@ -1129,47 +1161,129 @@ private struct HeroPanel: View {
 
 private struct ActionBar: View {
     @EnvironmentObject private var model: AppModel
+    private let columns = [
+        GridItem(.adaptive(minimum: 138), spacing: 10)
+    ]
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+            ActionBarButton(
+                title: model.daemonStatus.contains("Running") ? "Daemon" : (model.isDaemonStarting ? "Starting" : "Start"),
+                systemImage: model.daemonStatus.contains("Running") ? "checkmark.circle.fill" : "bolt.circle.fill",
+                tone: .good,
+                help: model.daemonStatus.contains("Running") ? "Daemon is running" : "Start local daemon",
+                disabled: model.isDaemonStarting
+            ) {
                 Task { await model.ensureDaemonRunning() }
-            } label: {
-                Label(model.daemonStatus.contains("Running") ? "Daemon Running" : (model.isDaemonStarting ? "Starting..." : "Start Daemon"), systemImage: model.daemonStatus.contains("Running") ? "checkmark.circle.fill" : "bolt.circle.fill")
             }
-            .buttonStyle(TonalButtonStyle(tone: .good))
-            .disabled(model.isDaemonStarting)
 
-            Button {
+            ActionBarButton(title: "Restart", systemImage: "arrow.clockwise.circle.fill", tone: .neutral, help: "Restart local daemon", disabled: model.isDaemonStarting) {
                 Task { await model.restartDaemonFromApp() }
-            } label: {
-                Label("Restart", systemImage: "arrow.clockwise.circle.fill")
             }
-            .buttonStyle(TonalButtonStyle(tone: .neutral))
-            .disabled(model.isDaemonStarting)
 
-            Button {
+            ActionBarButton(title: "Notify", systemImage: "bell.badge.fill", tone: .neutral, help: "Request notification permission") {
                 Task { await model.requestNotifications() }
-            } label: {
-                Label("Notifications", systemImage: "bell.badge.fill")
             }
-            .buttonStyle(TonalButtonStyle(tone: .neutral))
 
-            Button {
+            ActionBarButton(
+                title: model.accessibilityStatus == "Enabled" ? "Access On" : "Accessibility",
+                systemImage: "hand.raised.fill",
+                tone: model.accessibilityStatus == "Enabled" ? .good : .warning,
+                help: "Open Accessibility settings"
+            ) {
                 model.requestAccessibility()
-            } label: {
-                Label(model.accessibilityStatus == "Enabled" ? "Accessibility On" : "Open Accessibility", systemImage: "hand.raised.fill")
             }
-            .buttonStyle(TonalButtonStyle(tone: model.accessibilityStatus == "Enabled" ? .good : .warning))
 
-            Button {
+            ActionBarButton(title: "Refresh", systemImage: "arrow.clockwise", tone: .neutral, help: "Refresh integration status") {
                 Task { await model.refreshAll() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(TonalButtonStyle(tone: .neutral))
         }
         .padding(.top, 2)
+    }
+}
+
+private struct ActionBarButton: View {
+    let title: String
+    let systemImage: String
+    let tone: Tone
+    let help: String
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label {
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            } icon: {
+                Image(systemName: systemImage)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(TonalButtonStyle(tone: tone))
+        .disabled(disabled)
+        .help(help)
+    }
+}
+
+private struct TriggerStatusCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(AppTheme.green)
+                    .font(.system(size: 18, weight: .bold))
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Last hook event")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AppTheme.muted)
+                    Text(model.lastEventSummary)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(model.lastActionSummary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(2)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                TriggerLine(icon: "checkmark.circle.fill", text: "Triggers when Claude Code or Codex submits a prompt, starts a Bash/tool call, requests approval, or finishes work.", tone: .good)
+                TriggerLine(icon: "timer", text: "Long waits to try: sleep 12, pnpm test, npm run build, cargo test, xcodebuild, docker build.", tone: .neutral)
+                TriggerLine(icon: "minus.circle.fill", text: "Manual Terminal commands are not watched yet; they need the future shell fallback integration.", tone: .warning)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
+    }
+}
+
+private struct TriggerLine: View {
+    let icon: String
+    let text: String
+    let tone: Tone
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: icon)
+                .foregroundStyle(tone.color)
+        }
     }
 }
 
@@ -1250,23 +1364,36 @@ private struct PrivacyView: View {
 
 private struct DiagnosticsView: View {
     @EnvironmentObject private var model: AppModel
+    private let columns = [
+        GridItem(.adaptive(minimum: 160), spacing: 10)
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Header(title: "Diagnostics", subtitle: "Local smoke checks for the bundled daemon, hook, and installer.")
 
-            HStack(spacing: 10) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                 Button {
                     Task { await model.sendTestClaudeEvent() }
                 } label: {
-                    Label("Send Claude Test", systemImage: "paperplane.fill")
+                    Label("Claude Shell", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(TonalButtonStyle(tone: .good))
 
                 Button {
                     Task { await model.sendTestCodexEvent() }
                 } label: {
-                    Label("Send Codex Test", systemImage: "paperplane.fill")
+                    Label("Codex Test", systemImage: "hammer.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(TonalButtonStyle(tone: .good))
+
+                Button {
+                    Task { await model.sendTestPermissionEvent() }
+                } label: {
+                    Label("Permission", systemImage: "hand.raised.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(TonalButtonStyle(tone: .good))
 
@@ -1274,11 +1401,13 @@ private struct DiagnosticsView: View {
                     Task { await model.refreshStatus() }
                 } label: {
                     Label("Refresh Status", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(TonalButtonStyle(tone: .neutral))
             }
 
             InfoBand(text: "Bundled hook path: \(model.hookPath)", systemImage: "terminal.fill", tone: .neutral, monospaced: true)
+            TriggerStatusCard()
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Last command output")

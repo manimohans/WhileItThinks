@@ -134,17 +134,19 @@ Send a synthetic Claude event:
 
 ```bash
 /Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli \
-  test-event --source claude-code --event PreToolUse --command "sleep 8"
+  test-event --source claude-code --event shell_started --command "sleep 12"
 ```
 
 Send a synthetic Codex event:
 
 ```bash
 /Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli \
-  test-event --source codex --event PreToolUse --command "pnpm test"
+  test-event --source codex --event shell_started --command "pnpm test"
 ```
 
 Those commands do not contact Claude or Codex. They exercise the same daemon, overlay, notification, sanitizer, and classifier path that real hooks use.
+
+Real hook events are not timer-based. They fire only when Claude Code or Codex emits lifecycle events such as prompt submit, Bash/tool start, permission request, or stop. Manual Terminal commands are not watched until the shell fallback integration is added.
 
 ## Privacy Defaults
 

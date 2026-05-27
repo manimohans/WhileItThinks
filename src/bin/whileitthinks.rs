@@ -33,7 +33,7 @@ enum Command {
     TestEvent {
         #[arg(long, value_enum, default_value = "claude-code")]
         source: SourceArg,
-        #[arg(long, default_value = "shell_started")]
+        #[arg(long, default_value = "PreToolUse")]
         event: String,
         #[arg(long, default_value = "sleep 8")]
         command: String,
@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
             command,
         } => {
             let source = source.into();
+            let event = normalize_test_event(source, &event);
             let raw = serde_json::json!({
                 "hook_event_name": event,
                 "tool_name": "Bash",
@@ -112,6 +113,11 @@ async fn main() -> anyhow::Result<()> {
                 duration_ms: None,
                 raw,
             });
+            if events.is_empty() {
+                eprintln!(
+                    "No WhileItThinks event was produced for this synthetic hook. For Claude/Codex shell tests, use shell_started, shell_finished, PreToolUse, or PostToolUse."
+                );
+            }
             for event in events {
                 send_event(&event).await.ok();
                 println!("{}", serde_json::to_string_pretty(&event)?);
@@ -119,6 +125,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn normalize_test_event(source: Source, event: &str) -> String {
+    match source {
+        Source::ClaudeCode | Source::Codex => match event {
+            "shell_started" | "tool_started" => "PreToolUse".to_string(),
+            "shell_finished" | "tool_finished" => "PostToolUse".to_string(),
+            "permission_requested" => "PermissionRequest".to_string(),
+            "agent_started" | "prompt_submitted" => "UserPromptSubmit".to_string(),
+            "agent_stopped" => "Stop".to_string(),
+            _ => event.to_string(),
+        },
+        Source::Shell | Source::Macos => event.to_string(),
+    }
 }
 
 fn integrations(target: Target) -> Vec<Integration> {
@@ -135,5 +155,26 @@ impl From<SourceArg> for Source {
             SourceArg::ClaudeCode => Source::ClaudeCode,
             SourceArg::Codex => Source::Codex,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_aliases_match_claude_and_codex_hook_names() {
+        assert_eq!(
+            normalize_test_event(Source::ClaudeCode, "shell_started"),
+            "PreToolUse"
+        );
+        assert_eq!(
+            normalize_test_event(Source::Codex, "shell_finished"),
+            "PostToolUse"
+        );
+        assert_eq!(
+            normalize_test_event(Source::ClaudeCode, "permission_requested"),
+            "PermissionRequest"
+        );
     }
 }
