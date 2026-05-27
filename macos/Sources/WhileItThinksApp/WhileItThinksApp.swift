@@ -34,7 +34,7 @@ struct WhileItThinksApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
-                .frame(width: 520, height: 360)
+                .frame(width: 660, height: 620)
         }
     }
 }
@@ -90,6 +90,47 @@ enum Integration: String, CaseIterable, Identifiable {
     }
 }
 
+private enum OverlayTimingDefaults {
+    static let aiDelay = 6
+    static let workDelay = 5
+    static let commandDelay = 10
+    static let cooldown = 120
+}
+
+enum OverlayTimingSetting {
+    case aiDelay
+    case workDelay
+    case commandDelay
+    case cooldown
+
+    var defaultsKey: String {
+        switch self {
+        case .aiDelay: return "overlayTiming.aiDelaySeconds"
+        case .workDelay: return "overlayTiming.workDelaySeconds"
+        case .commandDelay: return "overlayTiming.commandDelaySeconds"
+        case .cooldown: return "overlayTiming.cooldownSeconds"
+        }
+    }
+
+    var defaultValue: Int {
+        switch self {
+        case .aiDelay: return OverlayTimingDefaults.aiDelay
+        case .workDelay: return OverlayTimingDefaults.workDelay
+        case .commandDelay: return OverlayTimingDefaults.commandDelay
+        case .cooldown: return OverlayTimingDefaults.cooldown
+        }
+    }
+
+    var range: ClosedRange<Int> {
+        switch self {
+        case .aiDelay, .workDelay, .commandDelay:
+            return 1...60
+        case .cooldown:
+            return 0...600
+        }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var claudeInstalled = false
@@ -108,6 +149,10 @@ final class AppModel: ObservableObject {
     @Published var lastOutput = ""
     @Published var lastEventSummary = "No Claude or Codex hook event received since the app opened."
     @Published var lastActionSummary = "Hooks are event-driven. Nothing runs every 8 seconds."
+    @Published var aiOverlayDelaySeconds = OverlayTimingDefaults.aiDelay
+    @Published var workOverlayDelaySeconds = OverlayTimingDefaults.workDelay
+    @Published var commandOverlayDelaySeconds = OverlayTimingDefaults.commandDelay
+    @Published var overlayCooldownSeconds = OverlayTimingDefaults.cooldown
     @Published var isBusy = false
     @Published var isDaemonStarting = false
 
@@ -123,8 +168,19 @@ final class AppModel: ObservableObject {
     private var overlayCooldownUntil = Date.distantPast
     private let overlayPresenter = OverlayPresenter()
 
+    init() {
+        aiOverlayDelaySeconds = Self.storedTiming(for: .aiDelay)
+        workOverlayDelaySeconds = Self.storedTiming(for: .workDelay)
+        commandOverlayDelaySeconds = Self.storedTiming(for: .commandDelay)
+        overlayCooldownSeconds = Self.storedTiming(for: .cooldown)
+    }
+
     var bundleDirectory: URL {
         Bundle.main.bundleURL
+    }
+
+    var overlayTimingDescription: String {
+        "AI \(formattedDuration(aiOverlayDelaySeconds)), build/test/install \(formattedDuration(workOverlayDelaySeconds)), generic command \(formattedDuration(commandOverlayDelaySeconds)), cooldown \(formattedDuration(overlayCooldownSeconds))."
     }
 
     var isRunningFromApplications: Bool {
@@ -148,6 +204,58 @@ final class AppModel: ObservableObject {
             .appendingPathComponent("Application Support")
             .appendingPathComponent("WhileItThinks")
             .appendingPathComponent("actions.jsonl")
+    }
+
+    private static func storedTiming(for setting: OverlayTimingSetting) -> Int {
+        guard UserDefaults.standard.object(forKey: setting.defaultsKey) != nil else {
+            return setting.defaultValue
+        }
+        return clampedTiming(UserDefaults.standard.integer(forKey: setting.defaultsKey), for: setting)
+    }
+
+    private static func clampedTiming(_ seconds: Int, for setting: OverlayTimingSetting) -> Int {
+        min(max(seconds, setting.range.lowerBound), setting.range.upperBound)
+    }
+
+    func formattedDuration(_ seconds: Int) -> String {
+        if seconds == 0 {
+            return "off"
+        }
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        if remainder == 0 {
+            return "\(minutes)m"
+        }
+        return "\(minutes)m \(remainder)s"
+    }
+
+    func setOverlayTiming(_ setting: OverlayTimingSetting, seconds: Int) {
+        let value = Self.clampedTiming(seconds, for: setting)
+        switch setting {
+        case .aiDelay:
+            aiOverlayDelaySeconds = value
+        case .workDelay:
+            workOverlayDelaySeconds = value
+        case .commandDelay:
+            commandOverlayDelaySeconds = value
+        case .cooldown:
+            overlayCooldownSeconds = value
+            if value == 0 {
+                overlayCooldownUntil = Date.distantPast
+            }
+        }
+        UserDefaults.standard.set(value, forKey: setting.defaultsKey)
+    }
+
+    func resetOverlayTimingDefaults() {
+        setOverlayTiming(.aiDelay, seconds: OverlayTimingDefaults.aiDelay)
+        setOverlayTiming(.workDelay, seconds: OverlayTimingDefaults.workDelay)
+        setOverlayTiming(.commandDelay, seconds: OverlayTimingDefaults.commandDelay)
+        setOverlayTiming(.cooldown, seconds: OverlayTimingDefaults.cooldown)
+        lastActionSummary = "Overlay timing reset to recommended defaults."
     }
 
     func refreshAll() async {
@@ -542,7 +650,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 self.visibleOverlayKey = key
-                self.overlayCooldownUntil = Date().addingTimeInterval(120)
+                self.overlayCooldownUntil = Date().addingTimeInterval(TimeInterval(self.overlayCooldownSeconds))
                 self.overlayPresenter.show(message: self.overlayCopy(for: waitState, fallback: message))
             }
         }
@@ -578,13 +686,13 @@ final class AppModel: ObservableObject {
     private func overlayDelaySeconds(for waitState: String) -> Double {
         switch waitState {
         case "build_running", "test_running", "package_installing", "docker_running", "xcode_building":
-            return 5
+            return Double(workOverlayDelaySeconds)
         case "command_running":
-            return 10
+            return Double(commandOverlayDelaySeconds)
         case "ai_generating", "agent_running_tools":
-            return 6
+            return Double(aiOverlayDelaySeconds)
         default:
-            return 6
+            return Double(aiOverlayDelaySeconds)
         }
     }
 
@@ -969,6 +1077,7 @@ private enum AppSection: String, CaseIterable, Identifiable {
     case tutorial
     case privacy
     case diagnostics
+    case settings
 
     var id: String { rawValue }
 
@@ -978,6 +1087,7 @@ private enum AppSection: String, CaseIterable, Identifiable {
         case .tutorial: return "Tutorial"
         case .privacy: return "Privacy"
         case .diagnostics: return "Diagnostics"
+        case .settings: return "Settings"
         }
     }
 
@@ -987,6 +1097,7 @@ private enum AppSection: String, CaseIterable, Identifiable {
         case .tutorial: return "list.bullet.rectangle"
         case .privacy: return "lock.shield"
         case .diagnostics: return "waveform.path.ecg"
+        case .settings: return "gearshape.fill"
         }
     }
 }
@@ -1038,6 +1149,8 @@ private struct ContentView: View {
             PrivacyView()
         case .diagnostics:
             DiagnosticsView()
+        case .settings:
+            SettingsView()
         }
     }
 }
@@ -1363,7 +1476,8 @@ private struct TriggerStatusCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 TriggerLine(icon: "checkmark.circle.fill", text: "Triggers when Claude Code or Codex submits a prompt, starts a Bash/tool call, requests approval, or finishes work.", tone: .good)
                 TriggerLine(icon: "sparkles", text: "Non-tool waits are covered: prompt submit starts AI generation, and Stop ends it.", tone: .good)
-                TriggerLine(icon: "timer", text: "Long waits to try: sleep 12, pnpm test, npm run build, cargo test, xcodebuild, docker build.", tone: .neutral)
+                TriggerLine(icon: "timer", text: "Overlay timing: \(model.overlayTimingDescription)", tone: .neutral)
+                TriggerLine(icon: "terminal", text: "Long waits to try: sleep 12, pnpm test, npm run build, cargo test, xcodebuild, docker build.", tone: .neutral)
                 TriggerLine(icon: "minus.circle.fill", text: "Manual Terminal commands are not watched yet; they need the future shell fallback integration.", tone: .warning)
             }
         }
@@ -1553,24 +1667,138 @@ private struct SettingsView: View {
                 RaccoonBlinkingAvatar(size: 54)
                 Header(title: "Settings", subtitle: "Local app controls.")
             }
-            Toggle("Launch WhileItThinks at login", isOn: Binding(
-                get: { launchAtLogin },
-                set: { value in
-                    launchAtLogin = value
-                    model.configureLaunchAtLogin(value)
+
+            TimingSettingsCard()
+
+            VStack(alignment: .leading, spacing: 10) {
+                SectionTitle("App", subtitle: "Local startup and health controls.")
+                Toggle("Launch WhileItThinks at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { value in
+                        launchAtLogin = value
+                        model.configureLaunchAtLogin(value)
+                    }
+                ))
+                .tint(AppTheme.green)
+                Text(model.launchAtLoginStatus)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+                Button("Refresh integration status") {
+                    Task { await model.refreshAll() }
                 }
-            ))
-            .tint(AppTheme.green)
-            Text(model.launchAtLoginStatus)
-                .foregroundStyle(AppTheme.muted)
-            Button("Refresh integration status") {
-                Task { await model.refreshAll() }
+                .buttonStyle(TonalButtonStyle(tone: .neutral))
             }
-            .buttonStyle(TonalButtonStyle(tone: .neutral))
+
             Spacer()
         }
         .padding(20)
         .background(AppTheme.page)
+        .onAppear {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+    }
+}
+
+private struct TimingSettingsCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionTitle("Overlay Timing", subtitle: "Defaults for real AI/build waits, not a repeating timer.")
+                    .layoutPriority(1)
+                Spacer()
+                Button("Reset Defaults") {
+                    model.resetOverlayTimingDefaults()
+                }
+                .buttonStyle(TonalButtonStyle(tone: .neutral))
+            }
+
+            TimingStepper(
+                title: "AI generation",
+                detail: "Claude/Codex is composing without a tool call.",
+                valueText: model.formattedDuration(model.aiOverlayDelaySeconds),
+                value: Binding(
+                    get: { model.aiOverlayDelaySeconds },
+                    set: { model.setOverlayTiming(.aiDelay, seconds: $0) }
+                ),
+                range: OverlayTimingSetting.aiDelay.range,
+                step: 1
+            )
+
+            TimingStepper(
+                title: "Builds, tests, installs",
+                detail: "Known long-running work: test, build, package install, Docker, Xcode.",
+                valueText: model.formattedDuration(model.workOverlayDelaySeconds),
+                value: Binding(
+                    get: { model.workOverlayDelaySeconds },
+                    set: { model.setOverlayTiming(.workDelay, seconds: $0) }
+                ),
+                range: OverlayTimingSetting.workDelay.range,
+                step: 1
+            )
+
+            TimingStepper(
+                title: "Generic shell commands",
+                detail: "Lower-confidence commands like sleep, curl, gh, deploy CLIs.",
+                valueText: model.formattedDuration(model.commandOverlayDelaySeconds),
+                value: Binding(
+                    get: { model.commandOverlayDelaySeconds },
+                    set: { model.setOverlayTiming(.commandDelay, seconds: $0) }
+                ),
+                range: OverlayTimingSetting.commandDelay.range,
+                step: 1
+            )
+
+            TimingStepper(
+                title: "Overlay cooldown",
+                detail: "Minimum time before another overlay can appear. Set to 0 to disable cooldown.",
+                valueText: model.formattedDuration(model.overlayCooldownSeconds),
+                value: Binding(
+                    get: { model.overlayCooldownSeconds },
+                    set: { model.setOverlayTiming(.cooldown, seconds: $0) }
+                ),
+                range: OverlayTimingSetting.cooldown.range,
+                step: 15
+            )
+
+            InfoBand(text: "Current timing: \(model.overlayTimingDescription)", systemImage: "timer", tone: .neutral)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
+    }
+}
+
+private struct TimingStepper: View {
+    let title: String
+    let detail: String
+    let valueText: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    var body: some View {
+        Stepper(value: $value, in: range, step: step) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                    Text(detail)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Text(valueText)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(AppTheme.green)
+                    .frame(minWidth: 54, alignment: .trailing)
+            }
+        }
     }
 }
 

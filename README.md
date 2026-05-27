@@ -155,6 +155,13 @@ Those commands do not contact Claude or Codex. They exercise the same daemon, ov
 
 Real hook events are not timer-based. They fire only when Claude Code or Codex emits lifecycle events such as prompt submit, Bash/tool start, permission request, or stop. Non-tool AI waits are covered by `UserPromptSubmit`/`Stop`; Bash/tool waits are covered by `PreToolUse`/`PostToolUse`. Manual Terminal commands are not watched until the shell fallback integration is added.
 
+Overlay timing is adjustable in the app's Settings page. Recommended defaults:
+
+- AI generation: 6 seconds
+- Build/test/install/Docker/Xcode waits: 5 seconds
+- Generic shell commands: 10 seconds
+- Overlay cooldown after showing: 120 seconds
+
 ## Privacy Defaults
 
 WhileItThinks stores sanitized metadata only:
