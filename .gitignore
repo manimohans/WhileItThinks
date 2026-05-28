@@ -6,6 +6,7 @@
 /frontend/.vercel/
 /frontend/.svelte-kit/
 /frontend/build/
+/output/
 __pycache__/
 *.pyc
 .DS_Store

@@ -1,0 +1,16 @@
+{
+  "name": "WhileItThinks",
+  "short_name": "WhileItThinks",
+  "description": "Local-first macOS break and return cues for Claude Code and Codex.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8faf6",
+  "theme_color": "#ffc44d",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
