@@ -1,8 +1,14 @@
 import { env } from '$env/dynamic/private';
+import { redisCommand } from '$lib/server/redis';
 
 const DEFAULT_COUNT_KEY = 'whileitthinks:install_count';
 const COUNT_SEED = 12;
 const CLAIM_SCRIPT = `
+local token = redis.call('GET', KEYS[2])
+if not token then
+  return {0, 0, 'invalid-token'}
+end
+
 local current = redis.call('GET', KEYS[1])
 if not current then
   redis.call('SET', KEYS[1], ARGV[1])
@@ -12,11 +18,12 @@ end
 current = tonumber(current)
 local limit = tonumber(ARGV[2])
 if current >= limit then
-  return {current, 0}
+  return {current, 0, 'limit'}
 end
 
 current = redis.call('INCR', KEYS[1])
-return {current, 1}
+redis.call('DEL', KEYS[2])
+return {current, 1, 'claimed'}
 `;
 
 export const INSTALL_LIMIT = 1000;
@@ -29,38 +36,8 @@ export type InstallStatus = {
 
 export type InstallClaim = InstallStatus & {
   claimed: boolean;
+  reason: 'claimed' | 'limit' | 'invalid-token';
 };
-
-type UpstashResponse<T> = {
-  result?: T;
-  error?: string;
-};
-
-async function redisCommand<T>(command: Array<string | number>): Promise<T | null> {
-  if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
-    return null;
-  }
-
-  const response = await fetch(env.UPSTASH_REDIS_REST_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(command)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Upstash command failed with HTTP ${response.status}`);
-  }
-
-  const payload = (await response.json()) as UpstashResponse<T>;
-  if (payload.error) {
-    throw new Error(payload.error);
-  }
-
-  return payload.result ?? null;
-}
 
 function getCountKey(): string {
   return env.INSTALL_COUNT_KEY || DEFAULT_COUNT_KEY;
@@ -100,19 +77,25 @@ function parseClaim(value: unknown): InstallClaim | null {
     return null;
   }
 
-  const count = asCount(value[0]);
+  const reason = value[2];
+  if (reason !== 'claimed' && reason !== 'limit' && reason !== 'invalid-token') {
+    return null;
+  }
+
+  const count = asCount(value[0]) ?? COUNT_SEED;
   const claimed = Number(value[1]) === 1;
-  return count === null ? null : { ...toStatus(count), claimed };
+  return { ...toStatus(count), claimed, reason };
 }
 
-export async function claimInstallDownload(): Promise<InstallClaim | null> {
+export async function claimInstallDownload(tokenKey: string): Promise<InstallClaim | null> {
   try {
     return parseClaim(
       await redisCommand<Array<number | string>>([
         'EVAL',
         CLAIM_SCRIPT,
-        1,
+        2,
         getCountKey(),
+        tokenKey,
         COUNT_SEED,
         INSTALL_LIMIT
       ])

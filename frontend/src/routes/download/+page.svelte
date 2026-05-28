@@ -5,6 +5,11 @@
   const downloadPath = '/download/app';
   const checksumPath = '/downloads/WhileItThinks-0.1.0.dmg.sha256';
   let { data }: { data: PageData } = $props();
+  let email = $state('');
+  let downloadLink = $state('');
+  let downloadEmail = $state('');
+  let formError = $state('');
+  let isSubmitting = $state(false);
 
   const installSteps = [
     'Download the DMG.',
@@ -38,6 +43,63 @@
   let structuredDataHead = $derived(
     '<scr' + `ipt type="application/ld+json">${downloadJsonLd}</scr` + 'ipt>'
   );
+
+  function looksLikeEmail(value: string): boolean {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
+  }
+
+  async function requestDownload(event: SubmitEvent) {
+    event.preventDefault();
+
+    if (data.isLimitReached || isSubmitting) {
+      return;
+    }
+
+    const requestedEmail = email.trim();
+    downloadLink = '';
+    downloadEmail = '';
+    formError = '';
+
+    if (!looksLikeEmail(requestedEmail)) {
+      formError = 'Enter a valid email address.';
+      return;
+    }
+
+    isSubmitting = true;
+
+    try {
+      const response = await fetch('/api/download-request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email: requestedEmail })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        downloadUrl?: unknown;
+        email?: unknown;
+        error?: unknown;
+      };
+
+      if (!response.ok) {
+        formError =
+          typeof payload.error === 'string' ? payload.error : 'Download link temporarily unavailable.';
+        return;
+      }
+
+      if (typeof payload.downloadUrl !== 'string') {
+        formError = 'Download link temporarily unavailable.';
+        return;
+      }
+
+      downloadLink = payload.downloadUrl;
+      downloadEmail = typeof payload.email === 'string' ? payload.email : requestedEmail;
+    } catch {
+      formError = 'Download link temporarily unavailable.';
+    } finally {
+      isSubmitting = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -94,7 +156,40 @@
         {#if data.isLimitReached}
           <button class="button button-primary" type="button" disabled>Download paused</button>
         {:else}
-          <a class="button button-primary" href={downloadPath} rel="nofollow">Download DMG</a>
+          <form class="email-gate" onsubmit={requestDownload}>
+            <label for="download-email">Email address</label>
+            <div class="email-row">
+              <input
+                id="download-email"
+                bind:value={email}
+                type="email"
+                name="email"
+                autocomplete="email"
+                inputmode="email"
+                maxlength="254"
+                placeholder="you@example.com"
+                required
+                aria-describedby="download-email-status"
+              />
+              <button class="button button-primary" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Preparing...' : 'Get download link'}
+              </button>
+            </div>
+            <p id="download-email-status" class="form-status" aria-live="polite">
+              {#if formError}
+                {formError}
+              {:else if downloadLink}
+                Link ready for {downloadEmail}.
+              {:else}
+                Valid email required for the launch download.
+              {/if}
+            </p>
+            {#if downloadLink}
+              <a class="button button-primary download-link" href={downloadLink} rel="nofollow">
+                Download DMG
+              </a>
+            {/if}
+          </form>
         {/if}
         <a class="button button-secondary" href={checksumPath}>View checksum</a>
       </div>
@@ -234,8 +329,59 @@
   .download-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: flex-start;
     gap: 14px;
     margin-top: 28px;
+  }
+
+  .email-gate {
+    display: grid;
+    flex: 1 1 430px;
+    gap: 12px;
+    max-width: 620px;
+  }
+
+  .email-gate label {
+    color: var(--ink);
+    font-size: 0.86rem;
+    font-weight: 850;
+  }
+
+  .email-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .email-row input {
+    flex: 1 1 230px;
+    min-height: 52px;
+    min-width: 0;
+    border: 2px solid var(--ink);
+    border-radius: 8px;
+    padding: 0 16px;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: 1rem;
+    box-shadow: 5px 5px 0 rgba(12, 25, 30, 0.16);
+  }
+
+  .email-row input:focus {
+    outline: 3px solid rgba(255, 195, 73, 0.45);
+    outline-offset: 2px;
+  }
+
+  .form-status {
+    min-height: 1.5em;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .download-link {
+    justify-self: start;
   }
 
   .install-count {

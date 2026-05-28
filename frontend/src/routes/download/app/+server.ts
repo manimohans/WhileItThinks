@@ -1,13 +1,24 @@
 import appDmg from '$lib/server/assets/WhileItThinks-0.1.0.dmg';
+import { getDownloadTokenKey, isDownloadToken } from '$lib/server/downloadAccess';
 import { claimInstallDownload, INSTALL_LIMIT } from '$lib/server/installCounter';
 import { read } from '$app/server';
 import { error } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
 
-export async function GET() {
-  const claim = await claimInstallDownload();
+export const GET: RequestHandler = async ({ url }) => {
+  const token = url.searchParams.get('token')?.trim() ?? '';
+  if (!isDownloadToken(token)) {
+    error(403, 'Enter a valid email address to get a download link.');
+  }
+
+  const claim = await claimInstallDownload(getDownloadTokenKey(token));
 
   if (!claim) {
     error(503, 'Download temporarily unavailable.');
+  }
+
+  if (claim.reason === 'invalid-token') {
+    error(403, 'Enter a valid email address to get a download link.');
   }
 
   if (!claim.claimed) {
@@ -24,4 +35,4 @@ export async function GET() {
     headers,
     status: 200
   });
-}
+};
