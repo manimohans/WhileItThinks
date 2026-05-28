@@ -97,6 +97,24 @@ private enum OverlayTimingDefaults {
     static let cooldown = 120
 }
 
+private enum MicrobreakDefaults {
+    static let blinkInterval = 600
+}
+
+private struct MicrobreakPrompt {
+    let action: String
+    let detail: String
+    let systemImage: String
+    let isBlink: Bool
+}
+
+private struct OverlayContent {
+    let status: String
+    let action: String
+    let detail: String
+    let systemImage: String
+}
+
 enum OverlayTimingSetting {
     case aiDelay
     case workDelay
@@ -154,6 +172,7 @@ final class AppModel: ObservableObject {
     @Published var workOverlayDelaySeconds = OverlayTimingDefaults.workDelay
     @Published var commandOverlayDelaySeconds = OverlayTimingDefaults.commandDelay
     @Published var overlayCooldownSeconds = OverlayTimingDefaults.cooldown
+    @Published var blinkPromptIntervalSeconds = MicrobreakDefaults.blinkInterval
     @Published var isBusy = false
     @Published var isDaemonStarting = false
 
@@ -168,6 +187,8 @@ final class AppModel: ObservableObject {
     private var pendingOverlayStates: [String: String] = [:]
     private var visibleOverlayKey: String?
     private var overlayCooldownUntil = Date.distantPast
+    private var nextMicrobreakIndex = 0
+    private var lastBlinkPromptAt = Date.distantPast
     private let overlayPresenter = OverlayPresenter()
 
     init() {
@@ -175,6 +196,12 @@ final class AppModel: ObservableObject {
         workOverlayDelaySeconds = Self.storedTiming(for: .workDelay)
         commandOverlayDelaySeconds = Self.storedTiming(for: .commandDelay)
         overlayCooldownSeconds = Self.storedTiming(for: .cooldown)
+        blinkPromptIntervalSeconds = Self.storedBlinkPromptInterval()
+        nextMicrobreakIndex = UserDefaults.standard.integer(forKey: "microbreak.nextPromptIndex")
+        let lastBlink = UserDefaults.standard.double(forKey: "microbreak.lastBlinkPromptAt")
+        if lastBlink > 0 {
+            lastBlinkPromptAt = Date(timeIntervalSince1970: lastBlink)
+        }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -192,6 +219,14 @@ final class AppModel: ObservableObject {
 
     var overlayTimingDescription: String {
         "AI thinking waits \(formattedPlainDuration(aiOverlayDelaySeconds)), builds/tests wait \(formattedPlainDuration(workOverlayDelaySeconds)), other commands wait \(formattedPlainDuration(commandOverlayDelaySeconds)), then cool down for \(formattedPlainDuration(overlayCooldownSeconds))."
+    }
+
+    var blinkPromptIntervalMinutes: Int {
+        max(1, blinkPromptIntervalSeconds / 60)
+    }
+
+    var microbreakSummary: String {
+        "\(Self.microbreakPrompts.count) rotating ideas. Blink prompts can appear at most once every \(formattedPlainDuration(blinkPromptIntervalSeconds))."
     }
 
     var codexTrustStatusText: String {
@@ -232,6 +267,14 @@ final class AppModel: ObservableObject {
             return setting.defaultValue
         }
         return clampedTiming(UserDefaults.standard.integer(forKey: setting.defaultsKey), for: setting)
+    }
+
+    private static func storedBlinkPromptInterval() -> Int {
+        let key = "microbreak.blinkIntervalSeconds"
+        guard UserDefaults.standard.object(forKey: key) != nil else {
+            return MicrobreakDefaults.blinkInterval
+        }
+        return min(max(UserDefaults.standard.integer(forKey: key), 60), 3600)
     }
 
     private static func clampedTiming(_ seconds: Int, for setting: OverlayTimingSetting) -> Int {
@@ -298,6 +341,54 @@ final class AppModel: ObservableObject {
         setOverlayTiming(.cooldown, seconds: OverlayTimingDefaults.cooldown)
         lastActionSummary = "Overlay timing reset to recommended defaults."
     }
+
+    func setBlinkPromptInterval(minutes: Int) {
+        let seconds = min(max(minutes, 1), 60) * 60
+        blinkPromptIntervalSeconds = seconds
+        UserDefaults.standard.set(seconds, forKey: "microbreak.blinkIntervalSeconds")
+    }
+
+    func resetMicrobreakDefaults() {
+        setBlinkPromptInterval(minutes: MicrobreakDefaults.blinkInterval / 60)
+        nextMicrobreakIndex = 0
+        lastBlinkPromptAt = Date.distantPast
+        UserDefaults.standard.set(nextMicrobreakIndex, forKey: "microbreak.nextPromptIndex")
+        UserDefaults.standard.removeObject(forKey: "microbreak.lastBlinkPromptAt")
+        lastActionSummary = "Microbreak prompts reset to recommended defaults."
+    }
+
+    private static let microbreakPrompts: [MicrobreakPrompt] = [
+        MicrobreakPrompt(action: "Blink slowly 8 times", detail: "Close fully, open fully, and let your eyes reset.", systemImage: "sparkles", isBlink: true),
+        MicrobreakPrompt(action: "Look 20 feet away", detail: "Pick one far object and keep your gaze soft for 20 seconds.", systemImage: "eye", isBlink: false),
+        MicrobreakPrompt(action: "Roll your shoulders", detail: "Make 5 slow circles backward, then let them drop.", systemImage: "arrow.clockwise", isBlink: false),
+        MicrobreakPrompt(action: "Stand up tall", detail: "Unfold your hips, stack your shoulders, and take one slow breath.", systemImage: "figure.stand", isBlink: false),
+        MicrobreakPrompt(action: "Walk to the doorway", detail: "Take a tiny lap away from the screen and come back when it finishes.", systemImage: "figure.walk", isBlink: false),
+        MicrobreakPrompt(action: "Close your eyes for 5 seconds", detail: "Let your eyelids rest. No peeking at the spinner.", systemImage: "moon.fill", isBlink: true),
+        MicrobreakPrompt(action: "Stretch your fingers", detail: "Open both hands wide, then relax them into your lap.", systemImage: "hand.raised.fill", isBlink: false),
+        MicrobreakPrompt(action: "Relax your jaw", detail: "Unclench your teeth and let your tongue rest.", systemImage: "face.smiling", isBlink: false),
+        MicrobreakPrompt(action: "Take 3 slow breaths", detail: "In through the nose, out a little longer than the inhale.", systemImage: "wind", isBlink: false),
+        MicrobreakPrompt(action: "Look out a window", detail: "Find daylight or the farthest edge of the room.", systemImage: "rectangle", isBlink: false),
+        MicrobreakPrompt(action: "Do 10 calf raises", detail: "Stand if you can, lift your heels, and lower slowly.", systemImage: "arrow.up", isBlink: false),
+        MicrobreakPrompt(action: "Rest your wrists", detail: "Let your hands drop from the keyboard for a moment.", systemImage: "keyboard", isBlink: false),
+        MicrobreakPrompt(action: "Blink, then look far", detail: "Blink 5 times, then focus past the screen.", systemImage: "sparkles", isBlink: true),
+        MicrobreakPrompt(action: "Turn your head gently", detail: "Look left, center, right, and back to center.", systemImage: "arrow.left.and.right", isBlink: false),
+        MicrobreakPrompt(action: "Open your chest", detail: "Pull your shoulders back gently and breathe into the stretch.", systemImage: "figure.stand", isBlink: false),
+        MicrobreakPrompt(action: "Shake out your arms", detail: "Loose wrists, loose elbows, no tension.", systemImage: "hand.raised.fill", isBlink: false),
+        MicrobreakPrompt(action: "Check your posture", detail: "Feet down, shoulders low, screen at a comfortable height.", systemImage: "person.fill", isBlink: false),
+        MicrobreakPrompt(action: "March in place", detail: "Stand and move for 20 seconds if you have room.", systemImage: "figure.walk", isBlink: false),
+        MicrobreakPrompt(action: "Soften your gaze", detail: "Stop staring hard. Let the screen blur for a breath.", systemImage: "eye", isBlink: false),
+        MicrobreakPrompt(action: "Sip water", detail: "Hydrate while the agent does the waiting.", systemImage: "drop.fill", isBlink: false),
+        MicrobreakPrompt(action: "Stretch your neck gently", detail: "Ear toward shoulder, pause, then switch sides.", systemImage: "arrow.left.and.right", isBlink: false),
+        MicrobreakPrompt(action: "Palms over eyes", detail: "Cover your closed eyes lightly for 10 seconds.", systemImage: "hand.raised.fill", isBlink: true),
+        MicrobreakPrompt(action: "Ankle circles", detail: "Circle each ankle under the desk a few times.", systemImage: "circle", isBlink: false),
+        MicrobreakPrompt(action: "Lean back and reset", detail: "Move your spine away from the screen and breathe.", systemImage: "arrow.up.left.and.arrow.down.right", isBlink: false),
+        MicrobreakPrompt(action: "Focus far, then near", detail: "Far wall, then your hand, then far wall again.", systemImage: "scope", isBlink: false),
+        MicrobreakPrompt(action: "Drop your shoulders", detail: "Lift them once, then let them fall heavy.", systemImage: "arrow.down", isBlink: false),
+        MicrobreakPrompt(action: "Step away for 30 seconds", detail: "If this is a build or test, give your body a real pause.", systemImage: "figure.walk", isBlink: false),
+        MicrobreakPrompt(action: "Relax your forehead", detail: "Smooth your brow and loosen your face.", systemImage: "face.smiling", isBlink: false),
+        MicrobreakPrompt(action: "Reach overhead", detail: "Stretch up gently, then let your arms float down.", systemImage: "arrow.up", isBlink: false),
+        MicrobreakPrompt(action: "Blink and breathe", detail: "Blink 6 times, then take one slow exhale.", systemImage: "sparkles", isBlink: true)
+    ]
 
     func refreshAll() async {
         startActionLogWatcher()
@@ -740,7 +831,7 @@ final class AppModel: ObservableObject {
                 }
                 self.visibleOverlayKey = key
                 self.overlayCooldownUntil = Date().addingTimeInterval(TimeInterval(self.overlayCooldownSeconds))
-                self.overlayPresenter.show(message: self.overlayCopy(for: waitState, fallback: message))
+                self.overlayPresenter.show(content: self.overlayContent(for: waitState, fallback: message))
             }
         }
     }
@@ -785,7 +876,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func overlayCopy(for waitState: String, fallback: String) -> String {
+    private func overlayContent(for waitState: String, fallback: String) -> OverlayContent {
+        let prompt = nextMicrobreakPrompt()
+        return OverlayContent(
+            status: overlayStatus(for: waitState, fallback: fallback),
+            action: prompt.action,
+            detail: prompt.detail,
+            systemImage: prompt.systemImage
+        )
+    }
+
+    private func overlayStatus(for waitState: String, fallback: String) -> String {
         switch waitState {
         case "ai_generating":
             return "AI is still thinking"
@@ -802,6 +903,35 @@ final class AppModel: ObservableObject {
         default:
             return fallback
         }
+    }
+
+    private func nextMicrobreakPrompt() -> MicrobreakPrompt {
+        guard !Self.microbreakPrompts.isEmpty else {
+            return MicrobreakPrompt(
+                action: "Look far away",
+                detail: "Your code is busy. Let your eyes rest for a few seconds.",
+                systemImage: "eye",
+                isBlink: false
+            )
+        }
+
+        for _ in Self.microbreakPrompts.indices {
+            let index = nextMicrobreakIndex % Self.microbreakPrompts.count
+            let prompt = Self.microbreakPrompts[index]
+            nextMicrobreakIndex = (index + 1) % Self.microbreakPrompts.count
+            UserDefaults.standard.set(nextMicrobreakIndex, forKey: "microbreak.nextPromptIndex")
+
+            if prompt.isBlink && Date().timeIntervalSince(lastBlinkPromptAt) < TimeInterval(blinkPromptIntervalSeconds) {
+                continue
+            }
+            if prompt.isBlink {
+                lastBlinkPromptAt = Date()
+                UserDefaults.standard.set(lastBlinkPromptAt.timeIntervalSince1970, forKey: "microbreak.lastBlinkPromptAt")
+            }
+            return prompt
+        }
+
+        return Self.microbreakPrompts.first { !$0.isBlink } ?? Self.microbreakPrompts[0]
     }
 
     private func postNotification(title: String, body: String) {
@@ -891,16 +1021,16 @@ final class AppModel: ObservableObject {
 @MainActor
 private final class OverlayPresenter {
     private var panel: NSPanel?
-    private let panelSize = NSSize(width: 386, height: 154)
+    private let panelSize = NSSize(width: 410, height: 168)
 
-    func show(message: String) {
+    func show(content: OverlayContent) {
         if panel == nil {
             panel = makePanel()
         }
-        let content = OverlayBanner(message: message) { [weak self] in
+        let view = OverlayBanner(content: content) { [weak self] in
             self?.hide()
         }
-        panel?.contentView = NSHostingView(rootView: content)
+        panel?.contentView = NSHostingView(rootView: view)
         positionPanel()
         panel?.orderFrontRegardless()
     }
@@ -947,13 +1077,13 @@ private enum AppTheme {
 }
 
 private struct OverlayBanner: View {
-    let message: String
+    let content: OverlayContent
     let onDismiss: () -> Void
     @State private var didEnter = false
 
     var body: some View {
         HStack(spacing: 14) {
-            RaccoonBlinkingAvatar(size: 88)
+            RaccoonBlinkingAvatar(size: 82)
                 .offset(x: didEnter ? 0 : -18, y: didEnter ? 0 : 4)
                 .opacity(didEnter ? 1 : 0)
 
@@ -963,10 +1093,10 @@ private struct OverlayBanner: View {
                         Text("The raccoon is on watch")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.green)
-                        Text(message)
-                            .font(.system(size: 17, weight: .bold))
+                        Text(content.status)
+                            .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(AppTheme.ink)
-                            .lineLimit(2)
+                            .lineLimit(1)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 4)
@@ -983,13 +1113,24 @@ private struct OverlayBanner: View {
                     .help("Dismiss")
                 }
 
-                Text("Blink slowly 8 times. Your code is busy; your eyes can step away.")
-                    .font(.system(size: 13, weight: .medium))
+                Label {
+                    Text(content.action)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: content.systemImage)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AppTheme.green)
+                }
+
+                Text(content.detail)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(2)
 
                 HStack(spacing: 5) {
-                    ForEach(0..<8, id: \.self) { index in
+                    ForEach(0..<6, id: \.self) { index in
                         Capsule()
                             .fill(index < 3 ? AppTheme.green : Color(red: 0.74, green: 0.79, blue: 0.76))
                             .frame(width: index < 3 ? 20 : 9, height: 5)
@@ -999,7 +1140,7 @@ private struct OverlayBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(width: 386, height: 154, alignment: .leading)
+        .frame(width: 410, height: 168, alignment: .leading)
         .background(
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1758,6 +1899,7 @@ private struct TutorialView: View {
             TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
             TutorialStep(number: "5", title: "Accessibility is optional", text: "Use it only for active-app/fullscreen suppression. Hook-based Claude and Codex detection does not require Accessibility.")
             TutorialStep(number: "6", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
+            TutorialStep(number: "7", title: "Microbreaks rotate", text: "The overlay cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Blink-specific prompts are spaced out in Settings so they do not show every time.")
         }
     }
 }
@@ -1862,6 +2004,7 @@ private struct SettingsView: View {
                 }
 
                 TimingSettingsCard()
+                MicrobreakSettingsCard()
 
                 VStack(alignment: .leading, spacing: 10) {
                     SectionTitle("App", subtitle: "Local startup and health controls.")
@@ -2002,6 +2145,78 @@ private struct TimingExplanationCard: View {
         .background(AppTheme.green.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.green.opacity(0.16), lineWidth: 1))
+    }
+}
+
+private struct MicrobreakSettingsCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionTitle("What should the raccoon suggest?", subtitle: "Each overlay rotates through small eye, posture, standing, walking, and stretch prompts.")
+                    .layoutPriority(1)
+                Spacer()
+                Button {
+                    model.resetMicrobreakDefaults()
+                } label: {
+                    Text("Reset")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(TonalButtonStyle(tone: .neutral))
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Microbreak rotation", systemImage: "shuffle")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(AppTheme.ink)
+                Text(model.microbreakSummary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Blink prompts are useful, but annoying if they appear every time. This setting spaces out blink-specific prompts while other movement prompts keep rotating.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.green.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.green.opacity(0.16), lineWidth: 1))
+
+            Stepper(value: Binding(
+                get: { model.blinkPromptIntervalMinutes },
+                set: { model.setBlinkPromptInterval(minutes: $0) }
+            ), in: 1...60, step: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Blink prompt spacing")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(AppTheme.ink)
+                        Text("Minimum time before another blink-specific suggestion can appear.")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AppTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Recommended: 10 minutes")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(AppTheme.green)
+                    }
+                    Spacer()
+                    Text(model.formattedPlainDuration(model.blinkPromptIntervalSeconds))
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AppTheme.green)
+                        .frame(minWidth: 92, alignment: .trailing)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
     }
 }
 

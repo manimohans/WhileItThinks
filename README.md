@@ -170,6 +170,8 @@ Overlay timing is adjustable in the app's Settings page. Recommended defaults:
 - Generic shell commands: 10 seconds
 - Overlay cooldown after showing: 120 seconds
 
+Microbreak prompts rotate through eye rest, distance focus, posture, stretching, standing, walking, breathing, and blink ideas. Blink-specific prompts are spaced out separately, defaulting to once every 10 minutes, and can be changed in Settings.
+
 ## Privacy Defaults
 
 WhileItThinks stores sanitized metadata only:
