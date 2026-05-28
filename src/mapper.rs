@@ -9,6 +9,7 @@ pub struct HookInput {
     pub event_name: String,
     pub command: Option<String>,
     pub cwd: Option<String>,
+    pub session_id: Option<String>,
     pub exit_code: Option<i32>,
     pub duration_ms: Option<i64>,
     pub raw: Value,
@@ -122,7 +123,10 @@ fn base(input: &HookInput, kind: EventKind) -> WhileItThinksEvent {
         .or_else(|| string_at(&input.raw, &["cwd"]));
     event.project_root = string_at(&input.raw, &["project_root"])
         .or_else(|| string_at(&input.raw, &["workspace_root"]));
-    event.session_id = string_at(&input.raw, &["session_id"]);
+    event.session_id = input
+        .session_id
+        .clone()
+        .or_else(|| string_at(&input.raw, &["session_id"]));
     event.conversation_id = string_at(&input.raw, &["conversation_id"]);
     event.generation_id = string_at(&input.raw, &["generation_id"]);
     event.duration_ms = input

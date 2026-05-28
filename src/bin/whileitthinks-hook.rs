@@ -22,6 +22,10 @@ struct Args {
     #[arg(long)]
     cwd: Option<String>,
     #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long)]
+    command_stdin: bool,
+    #[arg(long)]
     exit_code: Option<i32>,
     #[arg(long)]
     duration_ms: Option<i64>,
@@ -59,13 +63,23 @@ async fn main() -> ExitCode {
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
-    let raw = read_stdin_json()?;
+    let mut command = args.command;
+    let raw = if args.command_stdin {
+        let stdin_command = read_stdin_text()?;
+        if !stdin_command.is_empty() {
+            command = Some(stdin_command);
+        }
+        Value::Object(Default::default())
+    } else {
+        read_stdin_json()?
+    };
     let input = HookInput {
         source: args.source.into(),
         surface: args.surface.into(),
         event_name: args.event,
-        command: args.command,
+        command,
         cwd: args.cwd,
+        session_id: args.session_id,
         exit_code: args.exit_code,
         duration_ms: args.duration_ms,
         raw,
@@ -96,6 +110,15 @@ fn read_stdin_json() -> anyhow::Result<Value> {
         return Ok(Value::Object(Default::default()));
     }
     Ok(serde_json::from_str(&input)?)
+}
+
+fn read_stdin_text() -> anyhow::Result<String> {
+    if io::stdin().is_terminal() {
+        return Ok(String::new());
+    }
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    Ok(input)
 }
 
 impl From<SourceArg> for Source {

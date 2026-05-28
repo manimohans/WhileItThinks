@@ -70,6 +70,7 @@ private enum AppIcon {
 enum Integration: String, CaseIterable, Identifiable {
     case claude
     case codex
+    case shell
 
     var id: String { rawValue }
 
@@ -77,6 +78,7 @@ enum Integration: String, CaseIterable, Identifiable {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
+        case .shell: return "Terminal"
         }
     }
 
@@ -86,6 +88,8 @@ enum Integration: String, CaseIterable, Identifiable {
             return "Covers Claude Code CLI and the Claude Desktop Code tab through shared user settings."
         case .codex:
             return "Covers Codex CLI and Codex Desktop after one-time hook approval from Codex CLI."
+        case .shell:
+            return "Optional. Watches commands you type in new zsh Terminal tabs."
         }
     }
 }
@@ -153,14 +157,21 @@ enum OverlayTimingSetting {
 final class AppModel: ObservableObject {
     @Published var claudeInstalled = false
     @Published var codexInstalled = false
+    @Published var shellInstalled = false
     @Published var claudeConfigured = false
     @Published var codexConfigured = false
+    @Published var shellConfigured = false
     @Published var claudeNote = "Not checked yet."
     @Published var codexNote = "Not checked yet."
+    @Published var shellNote = "Optional. Turn on if you want manual zsh Terminal commands to count as waits."
     @Published var claudeHookSummary = "Unknown"
     @Published var codexHookSummary = "Unknown"
+    @Published var shellHookSummary = "Optional"
     @Published var daemonStatus = "Not running"
-    @Published var daemonDetail = "Click Start Daemon to launch the local event receiver."
+    @Published var daemonDetail = "Start the local receiver so hooks have somewhere to send events."
+    @Published var daemonHelperInstalled = false
+    @Published var daemonHelperConfigured = false
+    @Published var daemonHelperHealthy = false
     @Published var notificationStatus = "Not requested"
     @Published var accessibilityStatus = AppModel.accessibilityTrustStatus()
     @Published var launchAtLoginStatus = "Not configured"
@@ -172,6 +183,7 @@ final class AppModel: ObservableObject {
     @Published var workOverlayDelaySeconds = OverlayTimingDefaults.workDelay
     @Published var commandOverlayDelaySeconds = OverlayTimingDefaults.commandDelay
     @Published var overlayCooldownSeconds = OverlayTimingDefaults.cooldown
+    @Published var cooldownRemainingSeconds = 0
     @Published var blinkPromptIntervalSeconds = MicrobreakDefaults.blinkInterval
     @Published var isBusy = false
     @Published var isDaemonStarting = false
@@ -187,6 +199,7 @@ final class AppModel: ObservableObject {
     private var pendingOverlayStates: [String: String] = [:]
     private var visibleOverlayKey: String?
     private var overlayCooldownUntil = Date.distantPast
+    private var cooldownCountdownTask: Task<Void, Never>?
     private var nextMicrobreakIndex = 0
     private var lastBlinkPromptAt = Date.distantPast
     private let overlayPresenter = OverlayPresenter()
@@ -211,6 +224,7 @@ final class AppModel: ObservableObject {
                 self?.syncAccessibilityStatus()
             }
         }
+        startCooldownCountdown()
     }
 
     var bundleDirectory: URL {
@@ -219,6 +233,17 @@ final class AppModel: ObservableObject {
 
     var overlayTimingDescription: String {
         "AI thinking waits \(formattedPlainDuration(aiOverlayDelaySeconds)), builds/tests wait \(formattedPlainDuration(workOverlayDelaySeconds)), other commands wait \(formattedPlainDuration(commandOverlayDelaySeconds)), then cool down for \(formattedPlainDuration(overlayCooldownSeconds))."
+    }
+
+    var cooldownStatusText: String {
+        guard cooldownRemainingSeconds > 0 else {
+            return "Ready"
+        }
+        return "\(cooldownRemainingSeconds)s left"
+    }
+
+    var cooldownMenuTitle: String {
+        "Cooldown: \(cooldownStatusText)"
     }
 
     var blinkPromptIntervalMinutes: Int {
@@ -252,6 +277,10 @@ final class AppModel: ObservableObject {
 
     var hookPath: String {
         binaryURL("whileitthinks-hook").path
+    }
+
+    var daemonPath: String {
+        binaryURL("whileitthinksd").path
     }
 
     var actionsLogURL: URL {
@@ -329,6 +358,7 @@ final class AppModel: ObservableObject {
             overlayCooldownSeconds = value
             if value == 0 {
                 overlayCooldownUntil = Date.distantPast
+                updateCooldownRemainingSeconds()
             }
         }
         UserDefaults.standard.set(value, forKey: setting.defaultsKey)
@@ -390,6 +420,10 @@ final class AppModel: ObservableObject {
         MicrobreakPrompt(action: "Blink and breathe", detail: "Blink 6 times, then take one slow exhale.", systemImage: "sparkles", isBlink: true)
     ]
 
+    private func cliBaseArguments() -> [String] {
+        ["--hook-path", hookPath, "--daemon-path", daemonPath]
+    }
+
     func refreshAll() async {
         startActionLogWatcher()
         startAccessibilityWatcher()
@@ -399,11 +433,13 @@ final class AppModel: ObservableObject {
     }
 
     func refreshStatus() async {
-        let result = await runCLI(["--hook-path", hookPath, "status"])
+        let result = await runCLI(cliBaseArguments() + ["status"])
         lastOutput = result.display
         guard result.exitCode == 0 else {
             claudeNote = "Could not read status."
             codexNote = result.display
+            shellNote = result.display
+            await refreshDaemonStatus()
             return
         }
         parseStatus(result.stdout)
@@ -414,7 +450,7 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
 
         let command = enabled ? "install" : "uninstall"
-        let result = await runCLI(["--hook-path", hookPath, command, integration.rawValue])
+        let result = await runCLI(cliBaseArguments() + [command, integration.rawValue])
         lastOutput = result.display
         if integration == .codex {
             setCodexTrustAcknowledged(false)
@@ -425,20 +461,41 @@ final class AppModel: ObservableObject {
     func ensureDaemonRunning() async {
         isDaemonStarting = true
         daemonStatus = "Checking"
-        daemonDetail = "Checking whether the local event daemon is already accepting events."
+        daemonDetail = "Checking whether the local receiver is accepting events."
         defer { isDaemonStarting = false }
 
-        if await daemonHealthCheck() {
-            if daemonProcess == nil {
-                daemonStatus = "Running (external)"
-                daemonDetail = "A daemon is already running. If overlays do not follow real Claude/Codex events, use Restart Daemon to replace it with this app's bundled daemon."
+        await refreshDaemonStatus()
+        if daemonHelperConfigured && daemonHelperHealthy {
+            return
+        }
+
+        if isRunningFromApplications {
+            daemonStatus = "Starting"
+            daemonDetail = "Installing the background receiver for this user account."
+            let result = await runCLI(cliBaseArguments() + ["daemon", "install"])
+            lastOutput = result.display
+            if result.exitCode == 0 {
+                parseDaemonStatus(result.stdout)
             } else {
-                daemonStatus = "Running"
-                daemonDetail = "Daemon is running at 127.0.0.1:47328 and the local Unix socket."
+                daemonStatus = "Needs attention"
+                daemonDetail = result.display.isEmpty ? "Could not start the background receiver." : result.display
             }
             return
         }
 
+        if daemonHelperHealthy {
+            daemonStatus = "Running"
+            return
+        }
+        if await daemonHealthCheck() {
+            daemonStatus = "Running"
+            return
+        }
+
+        await startDevDaemonFallback()
+    }
+
+    private func startDevDaemonFallback() async {
         let daemonURL = binaryURL("whileitthinksd")
         guard FileManager.default.isExecutableFile(atPath: daemonURL.path) else {
             daemonStatus = "Missing bundled daemon"
@@ -447,7 +504,7 @@ final class AppModel: ObservableObject {
         }
 
         daemonStatus = "Starting"
-        daemonDetail = "Launching bundled whileitthinksd. This should take less than a second."
+        daemonDetail = "Launching bundled whileitthinksd for local development."
 
         let process = Process()
         process.executableURL = daemonURL
@@ -468,38 +525,48 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 350_000_000)
             if await daemonHealthCheck() {
                 daemonStatus = "Running"
-                daemonDetail = "Started successfully. Claude and Codex hooks can now send local wait-state events."
+                daemonDetail = "Development receiver started. Install the app in /Applications for the background helper."
             } else {
                 daemonStatus = "Starting"
-                daemonDetail = "Daemon process launched, but the health check has not answered yet. Click Refresh in a moment."
+                daemonDetail = "Receiver process launched, but the health check has not answered yet."
             }
         } catch {
             daemonStatus = "Failed to start: \(error.localizedDescription)"
-            daemonDetail = "The bundled daemon could not be launched. Check Diagnostics for command output."
+            daemonDetail = "The bundled receiver could not be launched. Check Diagnostics for command output."
         }
     }
 
     func restartDaemonFromApp() async {
         isDaemonStarting = true
         daemonStatus = "Restarting"
-        daemonDetail = "Stopping existing WhileItThinks daemons and starting the bundled daemon."
+        daemonDetail = "Restarting the local receiver."
+        defer { isDaemonStarting = false }
 
-        daemonProcess?.terminate()
-        daemonProcess = nil
+        if isRunningFromApplications {
+            let result = await runCLI(cliBaseArguments() + ["daemon", "restart"])
+            lastOutput = result.display
+            if result.exitCode == 0 {
+                parseDaemonStatus(result.stdout)
+            } else {
+                daemonStatus = "Needs attention"
+                daemonDetail = result.display.isEmpty ? "Could not restart the local receiver." : result.display
+            }
+        } else {
+            daemonProcess?.terminate()
+            daemonProcess = nil
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            await startDevDaemonFallback()
+        }
+    }
 
-        await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            process.arguments = ["-x", "whileitthinksd"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-        }.value
-
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        isDaemonStarting = false
-        await ensureDaemonRunning()
+    func refreshDaemonStatus() async {
+        let result = await runCLI(cliBaseArguments() + ["daemon", "status"])
+        guard result.exitCode == 0 else {
+            daemonStatus = "Unknown"
+            daemonDetail = result.display
+            return
+        }
+        parseDaemonStatus(result.stdout)
     }
 
     func requestNotifications() async {
@@ -614,11 +681,45 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func startCooldownCountdown() {
+        guard cooldownCountdownTask == nil else { return }
+        updateCooldownRemainingSeconds()
+        cooldownCountdownTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.updateCooldownRemainingSeconds()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func updateCooldownRemainingSeconds(now: Date = Date()) {
+        let remaining = max(0, Int(ceil(overlayCooldownUntil.timeIntervalSince(now))))
+        if cooldownRemainingSeconds != remaining {
+            cooldownRemainingSeconds = remaining
+        }
+    }
+
     private func parseStatus(_ output: String) {
         guard let data = output.data(using: .utf8),
-              let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+              let decoded = try? JSONSerialization.jsonObject(with: data) else {
             claudeNote = output
             codexNote = output
+            shellNote = output
+            return
+        }
+
+        let items: [[String: Any]]
+        if let object = decoded as? [String: Any] {
+            items = object["integrations"] as? [[String: Any]] ?? []
+            if let daemon = object["daemon"] as? [String: Any] {
+                applyDaemonStatus(daemon)
+            }
+        } else if let array = decoded as? [[String: Any]] {
+            items = array
+        } else {
+            claudeNote = output
+            codexNote = output
+            shellNote = output
             return
         }
 
@@ -638,7 +739,47 @@ final class AppModel: ObservableObject {
                 }
                 codexNote = integrationNextStep(.codex, item: item)
                 codexHookSummary = hookSummary(item)
+            } else if integration == "shell" {
+                shellInstalled = installed
+                shellConfigured = item["configured"] as? Bool ?? false
+                shellNote = integrationNextStep(.shell, item: item)
+                shellHookSummary = hookSummary(item)
             }
+        }
+    }
+
+    private func parseDaemonStatus(_ output: String) {
+        guard let data = output.data(using: .utf8),
+              let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            daemonStatus = "Unknown"
+            daemonDetail = output
+            return
+        }
+        applyDaemonStatus(item)
+    }
+
+    private func applyDaemonStatus(_ item: [String: Any]) {
+        daemonHelperInstalled = item["installed"] as? Bool ?? false
+        daemonHelperConfigured = item["configured"] as? Bool ?? false
+        daemonHelperHealthy = item["healthy"] as? Bool ?? false
+        let loaded = item["loaded"] as? Bool ?? false
+        let note = item["note"] as? String ?? "Local receiver status unknown."
+
+        if daemonHelperHealthy && daemonHelperConfigured {
+            daemonStatus = "Running"
+            daemonDetail = note
+        } else if daemonHelperInstalled {
+            daemonStatus = "Needs repair"
+            daemonDetail = note
+        } else if daemonHelperHealthy {
+            daemonStatus = "Running"
+            daemonDetail = note
+        } else if daemonHelperConfigured && loaded {
+            daemonStatus = "Starting"
+            daemonDetail = note
+        } else {
+            daemonStatus = "Not installed"
+            daemonDetail = note
         }
     }
 
@@ -669,6 +810,8 @@ final class AppModel: ObservableObject {
             return codexTrustAcknowledged
                 ? "Ready."
                 : "Open Codex CLI, run /hooks, approve WhileItThinks, then mark it done here."
+        case .shell:
+            return "Ready for new zsh Terminal tabs."
         }
     }
 
@@ -681,6 +824,12 @@ final class AppModel: ObservableObject {
         let integration = item["integration"] as? String ?? ""
         if integration == "codex", configured, !codexTrustAcknowledged {
             return "Needs trust"
+        }
+        if integration == "shell", !configured {
+            return installed > 0 ? "Needs repair" : "Optional"
+        }
+        if integration == "shell", configured {
+            return "Ready"
         }
         if configured {
             return "Ready (\(installed)/\(expected) hooks)"
@@ -826,11 +975,13 @@ final class AppModel: ObservableObject {
                 self.pendingOverlayStates[key] = nil
 
                 guard Date() >= self.overlayCooldownUntil else {
-                    self.lastActionSummary = "Overlay suppressed by cooldown; event was still recorded."
+                    self.updateCooldownRemainingSeconds()
+                    self.lastActionSummary = "Overlay suppressed by cooldown; \(self.cooldownStatusText.lowercased()). Event was still recorded."
                     return
                 }
                 self.visibleOverlayKey = key
                 self.overlayCooldownUntil = Date().addingTimeInterval(TimeInterval(self.overlayCooldownSeconds))
+                self.updateCooldownRemainingSeconds()
                 self.overlayPresenter.show(content: self.overlayContent(for: waitState, fallback: message))
             }
         }
@@ -1468,7 +1619,8 @@ private struct SidebarView: View {
             }
             .padding(.top, 8)
 
-            SidebarStatus(title: "Daemon", value: model.daemonStatus, tone: model.daemonStatus.contains("Running") ? .good : .warning)
+            SidebarStatus(title: "Receiver", value: model.daemonStatus, tone: model.daemonStatus.contains("Running") ? .good : .warning)
+            SidebarStatus(title: "Cooldown", value: model.cooldownStatusText, tone: model.cooldownRemainingSeconds > 0 ? .warning : .good)
 
             VStack(spacing: 6) {
                 ForEach(AppSection.allCases) { section in
@@ -1534,7 +1686,7 @@ private struct SidebarStatus: View {
                     .lineLimit(2)
                     .foregroundStyle(AppTheme.ink)
                 Spacer()
-                if title == "Daemon" {
+                if title == "Receiver" {
                     Button {
                         Task { await model.restartDaemonFromApp() }
                     } label: {
@@ -1544,7 +1696,7 @@ private struct SidebarStatus: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(AppTheme.green)
                     .disabled(model.isDaemonStarting)
-                    .help("Restart daemon")
+                    .help("Restart receiver")
                 }
             }
         }
@@ -1574,8 +1726,9 @@ private struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        Text(model.cooldownMenuTitle)
         Text("WhileItThinks")
-        Text("Daemon: \(model.daemonStatus)")
+        Text("Receiver: \(model.daemonStatus)")
         Text(model.daemonDetail)
             .font(.caption)
         Divider()
@@ -1583,11 +1736,11 @@ private struct MenuBarView: View {
             openWindow(id: "main")
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
-        Button(model.daemonStatus.contains("Running") ? "Daemon Running" : "Start Daemon") {
+        Button(model.daemonStatus.contains("Running") ? "Receiver Running" : "Start Receiver") {
             Task { await model.ensureDaemonRunning() }
         }
         .disabled(model.isDaemonStarting)
-        Button("Restart Daemon") {
+        Button("Restart Receiver") {
             Task { await model.restartDaemonFromApp() }
         }
         .disabled(model.isDaemonStarting)
@@ -1609,42 +1762,224 @@ private struct SetupView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HeroPanel()
 
-            PermissionStatusStrip()
+            SectionTitle("Setup checklist", subtitle: "Turn on the pieces you need. Claude and Codex hooks are local, backed up, and reversible.")
 
-            InfoBand(text: model.installLocationMessage, systemImage: model.isRunningFromApplications ? "checkmark.seal.fill" : "exclamationmark.triangle.fill", tone: model.isRunningFromApplications ? .good : .warning)
-            if !model.daemonStatus.contains("Running") {
-                InfoBand(text: model.daemonDetail, systemImage: "info.circle.fill", tone: .neutral)
+            SetupChecklistRow(
+                title: "App location",
+                status: model.isRunningFromApplications ? "Ready" : "Move app",
+                detail: model.installLocationMessage,
+                systemImage: model.isRunningFromApplications ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                tone: model.isRunningFromApplications ? .good : .warning
+            )
+
+            SetupChecklistRow(
+                title: "Local receiver",
+                status: model.daemonStatus.contains("Running") ? "Ready" : "Start",
+                detail: model.daemonDetail,
+                systemImage: "antenna.radiowaves.left.and.right",
+                tone: model.daemonStatus.contains("Running") ? .good : .warning,
+                actionTitle: model.daemonStatus.contains("Running") ? "Restart" : "Start",
+                actionIcon: "arrow.clockwise",
+                disabled: model.isDaemonStarting
+            ) {
+                Task {
+                    if model.daemonStatus.contains("Running") {
+                        await model.restartDaemonFromApp()
+                    } else {
+                        await model.ensureDaemonRunning()
+                    }
+                }
             }
 
-            SectionTitle("Integrations", subtitle: "Enable user-level hooks for Claude Code and Codex. Existing config is backed up and merged.")
-
-            IntegrationRow(
-                integration: .claude,
-                enabled: model.claudeInstalled,
-                configured: model.claudeConfigured,
-                hookSummary: model.claudeHookSummary,
+            SetupToggleChecklistRow(
+                title: "Claude Code",
+                status: model.claudeConfigured ? "Ready" : (model.claudeInstalled ? "Repair" : "Off"),
+                detail: "Works for Claude Code CLI and the Claude Desktop Code tab through shared user settings.",
                 note: model.claudeNote,
+                systemImage: "sparkles",
+                tone: model.claudeConfigured ? .good : (model.claudeInstalled ? .warning : .neutral),
+                enabled: model.claudeInstalled,
                 isBusy: model.isBusy
             ) { enabled in
                 Task { await model.setIntegration(.claude, enabled: enabled) }
             }
 
-            IntegrationRow(
-                integration: .codex,
-                enabled: model.codexInstalled,
-                configured: model.codexConfigured,
-                hookSummary: model.codexHookSummary,
+            SetupToggleChecklistRow(
+                title: "Codex",
+                status: codexStatusText,
+                detail: "Works for Codex CLI and Codex Desktop after you approve the hook once in Codex CLI.",
                 note: model.codexNote,
-                isBusy: model.isBusy
+                systemImage: "hammer.fill",
+                tone: codexTone,
+                enabled: model.codexInstalled,
+                isBusy: model.isBusy,
+                secondaryTitle: model.codexConfigured && !model.codexTrustAcknowledged ? "I approved it" : nil,
+                secondaryIcon: "checkmark.circle.fill"
             ) { enabled in
                 Task { await model.setIntegration(.codex, enabled: enabled) }
+            } secondaryAction: {
+                model.setCodexTrustAcknowledged(true)
+                model.codexNote = "Ready."
+                model.codexHookSummary = "Ready"
+            }
+
+            SetupToggleChecklistRow(
+                title: "Terminal commands",
+                status: model.shellConfigured ? "Ready" : (model.shellInstalled ? "Repair" : "Optional"),
+                detail: "Optional. Watches commands you type in new zsh Terminal tabs.",
+                note: model.shellNote,
+                systemImage: "terminal.fill",
+                tone: model.shellConfigured ? .good : (model.shellInstalled ? .warning : .neutral),
+                enabled: model.shellInstalled,
+                isBusy: model.isBusy
+            ) { enabled in
+                Task { await model.setIntegration(.shell, enabled: enabled) }
+            }
+
+            SetupChecklistRow(
+                title: "Notifications",
+                status: model.notificationStatus == "Enabled" ? "Ready" : "Optional",
+                detail: "Used only for approval prompts that need attention. Finished commands stay silent.",
+                systemImage: "bell.badge.fill",
+                tone: model.notificationStatus == "Enabled" ? .good : .neutral,
+                actionTitle: model.notificationStatus == "Enabled" ? nil : "Allow",
+                actionIcon: "bell.badge.fill"
+            ) {
+                Task { await model.requestNotifications() }
             }
 
             TriggerStatusCard()
         }
+    }
+
+    private var codexStatusText: String {
+        if model.codexConfigured && model.codexTrustAcknowledged { return "Ready" }
+        if model.codexConfigured { return "Approve" }
+        if model.codexInstalled { return "Repair" }
+        return "Off"
+    }
+
+    private var codexTone: Tone {
+        if model.codexConfigured && model.codexTrustAcknowledged { return .good }
+        if model.codexConfigured || model.codexInstalled { return .warning }
+        return .neutral
+    }
+}
+
+private struct SetupChecklistRow: View {
+    let title: String
+    let status: String
+    let detail: String
+    let systemImage: String
+    let tone: Tone
+    var actionTitle: String? = nil
+    var actionIcon: String? = nil
+    var disabled = false
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(tone.color)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                    StatusChip(text: status, tone: tone)
+                }
+                Text(detail)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            if let actionTitle, let actionIcon, let action {
+                Button(action: action) {
+                    Label(actionTitle, systemImage: actionIcon)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(CompactButtonStyle(tone: tone))
+                .disabled(disabled)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
+    }
+}
+
+private struct SetupToggleChecklistRow: View {
+    let title: String
+    let status: String
+    let detail: String
+    let note: String
+    let systemImage: String
+    let tone: Tone
+    let enabled: Bool
+    let isBusy: Bool
+    var secondaryTitle: String? = nil
+    var secondaryIcon: String? = nil
+    let onToggle: @Sendable (Bool) -> Void
+    var secondaryAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(tone.color)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                    StatusChip(text: status, tone: tone)
+                }
+                Text(detail)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(note)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink.opacity(0.78))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let secondaryTitle, let secondaryIcon, let secondaryAction {
+                    Button(action: secondaryAction) {
+                        Label(secondaryTitle, systemImage: secondaryIcon)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(CompactButtonStyle(tone: .good))
+                }
+            }
+
+            Spacer(minLength: 16)
+
+            Toggle("", isOn: Binding(get: { enabled }, set: onToggle))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(AppTheme.green)
+                .disabled(isBusy)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
     }
 }
 
@@ -1784,7 +2119,11 @@ private struct TriggerStatusCard: View {
                 TriggerLine(icon: "sparkles", text: "Non-tool waits are covered: prompt submit starts AI generation, and Stop ends it.", tone: .good)
                 TriggerLine(icon: "timer", text: "Timing is a delay after a real wait starts: \(model.overlayTimingDescription)", tone: .neutral)
                 TriggerLine(icon: "terminal", text: "Long waits to try: sleep 12, pnpm test, npm run build, cargo test, xcodebuild, docker build.", tone: .neutral)
-                TriggerLine(icon: "minus.circle.fill", text: "Manual Terminal commands are not watched yet; they need the future shell fallback integration.", tone: .warning)
+                TriggerLine(
+                    icon: model.shellConfigured ? "checkmark.circle.fill" : "plus.circle.fill",
+                    text: model.shellConfigured ? "Manual zsh Terminal commands are watched in new tabs." : "Manual zsh Terminal commands are optional; turn on Terminal commands in Setup if you want them watched.",
+                    tone: model.shellConfigured ? .good : .neutral
+                )
             }
         }
         .padding(16)
@@ -1882,12 +2221,14 @@ private struct TutorialView: View {
         VStack(alignment: .leading, spacing: 16) {
             Header(title: "Setup Tutorial", subtitle: "Enable Claude Code and Codex hooks, then approve the one Codex trust step.")
             TutorialStep(number: "1", title: "Put the app in Applications", text: "Keep WhileItThinks.app in /Applications before enabling hooks. Claude and Codex store an absolute path to the bundled hook binary.")
-            TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
-            TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
-            TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
-            TutorialStep(number: "5", title: "Accessibility is not required", text: "Claude and Codex wait detection works without Accessibility. Leave it off unless you want to try future active-app/fullscreen suppression controls in Settings.")
-            TutorialStep(number: "6", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
-            TutorialStep(number: "7", title: "Microbreaks rotate", text: "The overlay cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Blink-specific prompts are spaced out in Settings so they do not show every time.")
+            TutorialStep(number: "2", title: "Start the local receiver", text: "The receiver is a user-level background helper. Hooks send local events to it even when the main window is closed. The menu-bar app still needs to be open to draw overlays.")
+            TutorialStep(number: "3", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
+            TutorialStep(number: "4", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
+            TutorialStep(number: "5", title: "Optional Terminal commands", text: "Turn on Terminal commands only if you want manually typed zsh commands to count as waits. Open a new Terminal tab after enabling it.")
+            TutorialStep(number: "6", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
+            TutorialStep(number: "7", title: "Accessibility is not required", text: "Claude, Codex, Terminal command detection, and the background receiver work without Accessibility. Leave it off unless you want future active-app/fullscreen suppression controls in Settings.")
+            TutorialStep(number: "8", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
+            TutorialStep(number: "9", title: "Microbreaks rotate", text: "The overlay cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Blink-specific prompts are spaced out in Settings so they do not show every time.")
         }
     }
 }
@@ -1996,8 +2337,8 @@ private struct SettingsView: View {
                 AdvancedSettingsCard()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle("App", subtitle: "Local startup and health controls.")
-                    Toggle("Launch WhileItThinks at login", isOn: Binding(
+                    SectionTitle("App", subtitle: "Menu-bar startup and local receiver health.")
+                    Toggle("Open WhileItThinks menu bar at login", isOn: Binding(
                         get: { launchAtLogin },
                         set: { value in
                             launchAtLogin = value
@@ -2008,10 +2349,27 @@ private struct SettingsView: View {
                     Text(model.launchAtLoginStatus)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
-                    Button("Refresh integration status") {
-                        Task { await model.refreshAll() }
+                    HStack(spacing: 10) {
+                        Button("Refresh status") {
+                            Task { await model.refreshAll() }
+                        }
+                        .buttonStyle(TonalButtonStyle(tone: .neutral))
+                        Button(model.daemonStatus.contains("Running") ? "Restart receiver" : "Start receiver") {
+                            Task {
+                                if model.daemonStatus.contains("Running") {
+                                    await model.restartDaemonFromApp()
+                                } else {
+                                    await model.ensureDaemonRunning()
+                                }
+                            }
+                        }
+                        .buttonStyle(TonalButtonStyle(tone: .neutral))
+                        .disabled(model.isDaemonStarting)
                     }
-                    .buttonStyle(TonalButtonStyle(tone: .neutral))
+                    Text("Receiver: \(model.daemonStatus). \(model.daemonDetail)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(20)

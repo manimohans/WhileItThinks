@@ -19,6 +19,7 @@
 <p align="center">
   <a href="#start-here">Start Here</a> |
   <a href="#what-it-does">What It Does</a> |
+  <a href="#repository-layout">Repository Layout</a> |
   <a href="#architecture">Architecture</a> |
   <a href="#privacy-defaults">Privacy</a> |
   <a href="#development">Development</a>
@@ -49,14 +50,29 @@ open /Applications/WhileItThinks.app
 
 In the app:
 
-1. Start the daemon.
+1. Start the local receiver.
 2. Enable Claude Code if you use Claude Code CLI or the Claude Desktop Code tab.
 3. Enable Codex if you use Codex CLI or Codex Desktop.
-4. Allow notifications for approval alerts.
-5. For Claude Code, no extra trust step is required.
-6. For Codex, open Terminal, run `codex`, type `/hooks` in the Codex CLI, review WhileItThinks, and trust the hooks. Codex Desktop does not currently expose the hook browser command in its chat UI.
+4. Optionally enable Terminal commands if you want manually typed zsh commands watched.
+5. Allow notifications for approval alerts.
+6. For Claude Code, no extra trust step is required.
+7. For Codex, open Terminal, run `codex`, type `/hooks` in the Codex CLI, review WhileItThinks, and trust the hooks. Codex Desktop does not currently expose the hook browser command in its chat UI.
 
-Accessibility is not required for setup. Claude and Codex wait-state detection works without it. The optional control in Settings is only for future active-app/fullscreen suppression work.
+Accessibility is not required for setup. Claude, Codex, Terminal command detection, and the local receiver work without it. The optional control in Settings is only for future active-app/fullscreen suppression work.
+
+## Repository Layout
+
+The repository root is the core Rust/macOS product workspace: daemon, hook bridge, CLI, installer logic, Swift desktop app, tests, packaging scripts, and release artifacts.
+
+The marketing website lives separately in `frontend/` so backend and desktop-app work can stay focused at the root. The frontend is a SvelteKit app:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open the URL printed by Vite, usually `http://localhost:5173/`.
 
 ## What It Does
 
@@ -70,6 +86,7 @@ Current launch scope:
 | Claude Desktop Code tab | High | Same Claude Code engine, shared settings, and shared hook system |
 | Codex CLI | High | User-level hooks in `~/.codex/hooks.json` |
 | Codex Desktop app | High | Shared Codex agent configuration, after one-time hook trust approval from Codex CLI |
+| zsh Terminal commands | Optional | User-level zsh startup snippet and generated source file |
 
 VS Code and Cursor are intentionally deferred until the Claude/Codex path is solid.
 
@@ -85,7 +102,7 @@ Codex hooks
 whileitthinks-hook
         |
         v
-whileitthinksd local daemon
+whileitthinksd local receiver
         |
         v
 wait-state classifier + sanitized SQLite store
@@ -99,11 +116,11 @@ Bundled binaries:
 | Binary | Purpose |
 | --- | --- |
 | `WhileItThinks` | SwiftUI/AppKit desktop app |
-| `whileitthinksd` | Local event daemon |
+| `whileitthinksd` | Local event receiver daemon |
 | `whileitthinks-hook` | Fail-open hook bridge called by Claude/Codex |
 | `whileitthinks-cli` | Installer, status, guide, and test-event CLI used by the app |
 
-The daemon listens locally on:
+The receiver listens locally on:
 
 - Unix socket: `~/Library/Application Support/WhileItThinks/whileitthinks.sock`
 - HTTP: `http://127.0.0.1:47328/v1/events`
@@ -136,6 +153,24 @@ Uninstall both integrations:
 
 Config writes always parse, back up, merge, validate, and write atomically. Existing Claude and Codex settings are preserved.
 
+Install optional zsh Terminal fallback:
+
+```bash
+/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli \
+  --hook-path /Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-hook \
+  install shell
+```
+
+This writes `~/Library/Application Support/WhileItThinks/shell/zsh.zsh` and adds one marked source block to `~/.zshrc`. Open a new Terminal tab before testing it.
+
+Manage the background receiver:
+
+```bash
+/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli daemon status
+/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli daemon install
+/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-cli daemon restart
+```
+
 ## Manual Smoke Tests
 
 Send a synthetic Claude event:
@@ -161,7 +196,7 @@ Send a synthetic Codex event:
 
 Those commands do not contact Claude or Codex. They exercise the same daemon, overlay, notification, sanitizer, and classifier path that real hooks use.
 
-Real hook events are not timer-based. They fire only when Claude Code or Codex emits lifecycle events such as prompt submit, Bash/tool start, permission request, or stop. Non-tool AI waits are covered by `UserPromptSubmit`/`Stop`; Bash/tool waits are covered by `PreToolUse`/`PostToolUse`. Manual Terminal commands are not watched until the shell fallback integration is added.
+Real hook events are not timer-based. They fire only when Claude Code or Codex emits lifecycle events such as prompt submit, Bash/tool start, permission request, or stop. Non-tool AI waits are covered by `UserPromptSubmit`/`Stop`; Bash/tool waits are covered by `PreToolUse`/`PostToolUse`. If the optional zsh fallback is enabled, manually typed Terminal commands fire `shell_started` and `shell_finished` through zsh `preexec`/`precmd`.
 
 Overlay timing is adjustable in the app's Settings page. Recommended defaults:
 
@@ -244,6 +279,5 @@ Useful local files:
 ## Production Gaps
 
 - Sign and notarize the app for distribution.
-- Replace the app-owned daemon process with a proper login item/helper.
 - Add automated smoke scripts for Claude CLI/Desktop and Codex CLI/Desktop on a clean macOS test user.
 - Add VS Code and Cursor only after the Claude/Codex path is boringly reliable.

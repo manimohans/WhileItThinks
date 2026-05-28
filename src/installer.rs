@@ -16,6 +16,7 @@ use crate::paths::{default_installed_hook_path, home_dir};
 pub enum Integration {
     Claude,
     Codex,
+    Shell,
 }
 
 impl fmt::Display for Integration {
@@ -23,6 +24,7 @@ impl fmt::Display for Integration {
         match self {
             Self::Claude => write!(f, "Claude Code"),
             Self::Codex => write!(f, "Codex"),
+            Self::Shell => write!(f, "Shell"),
         }
     }
 }
@@ -75,6 +77,7 @@ pub fn install(
     match integration {
         Integration::Claude => install_claude(options),
         Integration::Codex => install_codex(options),
+        Integration::Shell => install_shell(options),
     }
 }
 
@@ -93,6 +96,7 @@ pub fn uninstall(
             &codex_config_path(&options.home),
             Source::Codex,
         ),
+        Integration::Shell => uninstall_shell(options),
     }
 }
 
@@ -108,14 +112,20 @@ pub fn status_with_options(
     integration: Integration,
     options: &InstallOptions,
 ) -> anyhow::Result<IntegrationStatus> {
+    if integration == Integration::Shell {
+        return shell_status(options);
+    }
+
     let (path, source) = match integration {
         Integration::Claude => (claude_config_path(&options.home), Source::ClaudeCode),
         Integration::Codex => (codex_config_path(&options.home), Source::Codex),
+        Integration::Shell => unreachable!("handled above"),
     };
     let exists = path.exists();
     let expected_specs = match integration {
         Integration::Claude => claude_specs(&options.hook_path),
         Integration::Codex => codex_specs(&options.hook_path),
+        Integration::Shell => unreachable!("handled above"),
     };
     let expected_hook_count = expected_specs.len();
     let mut installed_hook_count = 0;
@@ -174,6 +184,7 @@ pub fn status_with_options(
             Integration::Codex => {
                 "Configured. Codex requires one approval in the CLI /hooks screen before command hooks run.".to_string()
             }
+            Integration::Shell => unreachable!("handled above"),
         }
     };
 
@@ -224,6 +235,136 @@ fn install_codex(options: &InstallOptions) -> anyhow::Result<InstallReport> {
         note:
             "Codex hooks installed. The user must approve WhileItThinks once from Codex CLI /hooks."
                 .to_string(),
+    })
+}
+
+fn install_shell(options: &InstallOptions) -> anyhow::Result<InstallReport> {
+    let source_path = shell_source_path(&options.home);
+    if let Some(parent) = source_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create shell integration dir {}", parent.display()))?;
+    }
+    fs::write(&source_path, shell_source_contents(&options.hook_path))
+        .with_context(|| format!("write {}", source_path.display()))?;
+
+    let zshrc = zshrc_path(&options.home);
+    let existing = if zshrc.exists() {
+        fs::read_to_string(&zshrc).with_context(|| format!("read {}", zshrc.display()))?
+    } else {
+        String::new()
+    };
+    let without_old = remove_marked_block(&existing);
+    let marker = shell_marker_block(&source_path);
+    let mut next = without_old.trim_end_matches('\n').to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str(&marker);
+    next.push('\n');
+
+    let backup = write_text_with_backup(&zshrc, &next)?;
+    Ok(InstallReport {
+        integration: Integration::Shell,
+        config_path: zshrc,
+        backup_path: backup,
+        installed: true,
+        note: "Shell fallback installed for new zsh tabs. Open a new Terminal tab before testing manual commands."
+            .to_string(),
+    })
+}
+
+fn uninstall_shell(options: &InstallOptions) -> anyhow::Result<InstallReport> {
+    let zshrc = zshrc_path(&options.home);
+    let backup = if zshrc.exists() {
+        let existing =
+            fs::read_to_string(&zshrc).with_context(|| format!("read {}", zshrc.display()))?;
+        let next = remove_marked_block(&existing);
+        write_text_with_backup(&zshrc, &next)?
+    } else {
+        None
+    };
+
+    let source_path = shell_source_path(&options.home);
+    if source_path.exists() {
+        fs::remove_file(&source_path)
+            .with_context(|| format!("remove {}", source_path.display()))?;
+    }
+
+    Ok(InstallReport {
+        integration: Integration::Shell,
+        config_path: zshrc,
+        backup_path: backup,
+        installed: false,
+        note: "Shell fallback removed from zsh startup.".to_string(),
+    })
+}
+
+fn shell_status(options: &InstallOptions) -> anyhow::Result<IntegrationStatus> {
+    let zshrc = zshrc_path(&options.home);
+    let source_path = shell_source_path(&options.home);
+    let zshrc_exists = zshrc.exists();
+    let source_exists = source_path.exists();
+    let source_loaded = zshrc_exists
+        && fs::read_to_string(&zshrc)
+            .map(|contents| {
+                contents.contains(SHELL_MARKER_BEGIN) && contents.contains(SHELL_MARKER_END)
+            })
+            .unwrap_or(false);
+    let source_contents = if source_exists {
+        fs::read_to_string(&source_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let stale_hook_paths = extract_shell_hook_path(&source_contents)
+        .filter(|path| path != &options.hook_path)
+        .map(|path| vec![path])
+        .unwrap_or_default();
+    let expected_hook_path_exists = Path::new(&options.hook_path).exists();
+    let missing_events = [
+        (!source_loaded).then_some("zsh startup block"),
+        (!source_exists).then_some("zsh source file"),
+    ]
+    .into_iter()
+    .flatten()
+    .map(ToOwned::to_owned)
+    .collect::<Vec<_>>();
+    let installed = source_loaded || source_exists;
+    let configured = source_loaded
+        && source_exists
+        && stale_hook_paths.is_empty()
+        && expected_hook_path_exists
+        && source_contents.contains("--source shell")
+        && source_contents.contains("--command-stdin");
+    let note = if !installed {
+        "Optional. Turn this on if you want WhileItThinks to watch commands you type in zsh Terminal."
+            .to_string()
+    } else if !stale_hook_paths.is_empty() {
+        "Shell fallback points at another app copy. Toggle it off and on to repair.".to_string()
+    } else if !expected_hook_path_exists {
+        format!(
+            "Shell fallback is installed, but the hook binary is missing at {}.",
+            options.hook_path
+        )
+    } else if !configured {
+        "Shell fallback is incomplete. Toggle it off and on to repair.".to_string()
+    } else {
+        "Ready. New zsh Terminal tabs can send manual command wait states.".to_string()
+    };
+
+    Ok(IntegrationStatus {
+        integration: Integration::Shell,
+        config_path: zshrc,
+        config_exists: zshrc_exists,
+        installed,
+        configured,
+        installed_hook_count: usize::from(source_loaded),
+        expected_hook_count: 1,
+        expected_hook_path: options.hook_path.clone(),
+        expected_hook_path_exists,
+        stale_hook_paths,
+        missing_events,
+        requires_user_action: false,
+        note,
     })
 }
 
@@ -589,6 +730,113 @@ fn source_arg(source: Source) -> &'static str {
     }
 }
 
+const SHELL_MARKER_BEGIN: &str = "# >>> whileitthinks shell integration >>>";
+const SHELL_MARKER_END: &str = "# <<< whileitthinks shell integration <<<";
+
+fn shell_marker_block(source_path: &Path) -> String {
+    format!(
+        "{SHELL_MARKER_BEGIN}\nsource {}\n{SHELL_MARKER_END}",
+        shell_quote(&source_path.to_string_lossy())
+    )
+}
+
+fn shell_source_contents(hook_path: &str) -> String {
+    format!(
+        r#"# WhileItThinks zsh integration. Generated by WhileItThinks.
+# This file is local-only and fails open when the app is not running.
+
+if [[ -z "${{__WHILEITTHINKS_ZSH_LOADED:-}}" ]]; then
+  typeset -g __WHILEITTHINKS_ZSH_LOADED=1
+  typeset -g __whileitthinks_hook={hook}
+  typeset -g __whileitthinks_command_id=""
+  typeset -g __whileitthinks_command_text=""
+
+  __whileitthinks_send() {{
+    emulate -L zsh
+    local event="$1"
+    local exit_code="${{2:-}}"
+    local command="${{3:-}}"
+    [[ -x "$__whileitthinks_hook" ]] || return 0
+
+    local -a args
+    args=(--source shell --surface cli --event "$event" --cwd "$PWD" --session-id "$__whileitthinks_command_id" --command-stdin)
+    if [[ -n "$exit_code" ]]; then
+      args+=(--exit-code "$exit_code")
+    fi
+
+    printf '%s' "$command" | "$__whileitthinks_hook" "${{args[@]}}" >/dev/null 2>&1 &
+  }}
+
+  __whileitthinks_preexec() {{
+    emulate -L zsh
+    __whileitthinks_command_id="${{EPOCHSECONDS:-$(date +%s)}}-$$-$RANDOM"
+    __whileitthinks_command_text="$1"
+    __whileitthinks_send shell_started "" "$__whileitthinks_command_text"
+  }}
+
+  __whileitthinks_precmd() {{
+    local exit_code=$?
+    emulate -L zsh
+    if [[ -n "${{__whileitthinks_command_id:-}}" ]]; then
+      __whileitthinks_send shell_finished "$exit_code" "$__whileitthinks_command_text"
+      __whileitthinks_command_id=""
+      __whileitthinks_command_text=""
+    fi
+    return "$exit_code"
+  }}
+
+  autoload -Uz add-zsh-hook
+  add-zsh-hook -d preexec __whileitthinks_preexec 2>/dev/null || true
+  add-zsh-hook -d precmd __whileitthinks_precmd 2>/dev/null || true
+  add-zsh-hook preexec __whileitthinks_preexec
+  add-zsh-hook precmd __whileitthinks_precmd
+fi
+"#,
+        hook = shell_quote(hook_path)
+    )
+}
+
+fn remove_marked_block(contents: &str) -> String {
+    let mut result = contents.to_string();
+    while let Some(begin) = result.find(SHELL_MARKER_BEGIN) {
+        let search_after_begin = begin + SHELL_MARKER_BEGIN.len();
+        let Some(end_offset) = result[search_after_begin..].find(SHELL_MARKER_END) else {
+            break;
+        };
+        let end = search_after_begin + end_offset + SHELL_MARKER_END.len();
+        let remove_end = if result[end..].starts_with("\r\n") {
+            end + 2
+        } else if result[end..].starts_with('\n') {
+            end + 1
+        } else {
+            end
+        };
+        result.replace_range(begin..remove_end, "");
+    }
+    result
+}
+
+fn extract_shell_hook_path(contents: &str) -> Option<String> {
+    let line = contents.lines().find(|line| {
+        line.trim_start()
+            .starts_with("typeset -g __whileitthinks_hook=")
+    })?;
+    let value = line.split_once('=')?.1.trim();
+    shell_unquote(value)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_unquote(value: &str) -> Option<String> {
+    let value = value.trim();
+    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        return Some(inner.replace("'\\''", "'"));
+    }
+    Some(value.trim_matches('"').to_string()).filter(|value| !value.is_empty())
+}
+
 fn read_json_or_empty(path: &Path) -> anyhow::Result<Value> {
     if !path.exists() {
         return Ok(json!({}));
@@ -629,6 +877,32 @@ fn write_json_with_backup(path: &Path, value: &Value) -> anyhow::Result<Option<P
     Ok(backup)
 }
 
+fn write_text_with_backup(path: &Path, contents: &str) -> anyhow::Result<Option<PathBuf>> {
+    let backup = if path.exists() {
+        let backup_path = backup_path(path)?;
+        fs::copy(path, &backup_path)
+            .with_context(|| format!("backup {} to {}", path.display(), backup_path.display()))?;
+        Some(backup_path)
+    } else {
+        None
+    };
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create config directory {}", parent.display()))?;
+    }
+    let tmp_path = path.with_file_name(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("config"),
+        Uuid::new_v4()
+    ));
+    fs::write(&tmp_path, contents).with_context(|| format!("write {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| format!("replace config {}", path.display()))?;
+    Ok(backup)
+}
+
 fn backup_path(path: &Path) -> anyhow::Result<PathBuf> {
     let filename = path
         .file_name()
@@ -652,6 +926,18 @@ fn claude_config_path(home: &Path) -> PathBuf {
 
 fn codex_config_path(home: &Path) -> PathBuf {
     home.join(".codex").join("hooks.json")
+}
+
+fn zshrc_path(home: &Path) -> PathBuf {
+    home.join(".zshrc")
+}
+
+fn shell_source_path(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("WhileItThinks")
+        .join("shell")
+        .join("zsh.zsh")
 }
 
 pub fn discover_hook_path() -> String {

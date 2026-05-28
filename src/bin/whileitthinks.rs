@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use whileitthinks::event::{Source, Surface};
 use whileitthinks::installer::{self, InstallOptions, Integration};
+use whileitthinks::launch_agent::{self, DaemonOptions};
 use whileitthinks::mapper::{map_hook, HookInput};
 use whileitthinks::onboarding::DESKTOP_APP_GUIDE;
 use whileitthinks::paths::home_dir;
@@ -16,6 +17,8 @@ struct Args {
     home: Option<PathBuf>,
     #[arg(long)]
     hook_path: Option<String>,
+    #[arg(long)]
+    daemon_path: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -24,6 +27,9 @@ struct Args {
 enum Command {
     Status,
     Guide,
+    Daemon {
+        action: DaemonAction,
+    },
     Install {
         target: Target,
     },
@@ -41,10 +47,19 @@ enum Command {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum DaemonAction {
+    Status,
+    Install,
+    Uninstall,
+    Restart,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum Target {
     All,
     Claude,
     Codex,
+    Shell,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -52,6 +67,13 @@ enum SourceArg {
     #[value(name = "claude-code")]
     ClaudeCode,
     Codex,
+    Shell,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusReport {
+    integrations: Vec<installer::IntegrationStatus>,
+    daemon: launch_agent::DaemonStatus,
 }
 
 #[tokio::main]
@@ -59,21 +81,44 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let home = args.home.unwrap_or_else(home_dir);
     let hook_path = args.hook_path.unwrap_or_else(installer::discover_hook_path);
+    let daemon_path = args
+        .daemon_path
+        .unwrap_or_else(launch_agent::discover_daemon_path);
     let options = InstallOptions {
         home: home.clone(),
         hook_path,
     };
+    let daemon_options = DaemonOptions {
+        home: home.clone(),
+        daemon_path,
+    };
 
     match args.command {
         Command::Status => {
-            let statuses: Vec<_> = integrations(Target::All)
+            let integrations: Vec<_> = status_integrations()
                 .into_iter()
                 .map(|integration| installer::status_with_options(integration, &options))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            println!("{}", serde_json::to_string_pretty(&statuses)?);
+            let daemon = launch_agent::status_with_options(&daemon_options)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&StatusReport {
+                    integrations,
+                    daemon,
+                })?
+            );
         }
         Command::Guide => {
             println!("{DESKTOP_APP_GUIDE}");
+        }
+        Command::Daemon { action } => {
+            let status = match action {
+                DaemonAction::Status => launch_agent::status_with_options(&daemon_options)?,
+                DaemonAction::Install => launch_agent::install_with_options(&daemon_options)?,
+                DaemonAction::Uninstall => launch_agent::uninstall_with_options(&daemon_options)?,
+                DaemonAction::Restart => launch_agent::restart_with_options(&daemon_options)?,
+            };
+            println!("{}", serde_json::to_string_pretty(&status)?);
         }
         Command::Install { target } => {
             for integration in integrations(target) {
@@ -100,15 +145,16 @@ async fn main() -> anyhow::Result<()> {
             let raw = serde_json::json!({
                 "hook_event_name": event,
                 "tool_name": "Bash",
-                "tool_input": { "command": command },
+                "tool_input": { "command": command.clone() },
                 "cwd": std::env::current_dir()?.to_string_lossy(),
             });
             let events = map_hook(HookInput {
                 source,
                 surface: Surface::Unknown,
                 event_name: event,
-                command: None,
-                cwd: None,
+                command: Some(command),
+                cwd: Some(std::env::current_dir()?.to_string_lossy().to_string()),
+                session_id: None,
                 exit_code: None,
                 duration_ms: None,
                 raw,
@@ -146,7 +192,12 @@ fn integrations(target: Target) -> Vec<Integration> {
         Target::All => vec![Integration::Claude, Integration::Codex],
         Target::Claude => vec![Integration::Claude],
         Target::Codex => vec![Integration::Codex],
+        Target::Shell => vec![Integration::Shell],
     }
+}
+
+fn status_integrations() -> Vec<Integration> {
+    vec![Integration::Claude, Integration::Codex, Integration::Shell]
 }
 
 impl From<SourceArg> for Source {
@@ -154,6 +205,7 @@ impl From<SourceArg> for Source {
         match value {
             SourceArg::ClaudeCode => Source::ClaudeCode,
             SourceArg::Codex => Source::Codex,
+            SourceArg::Shell => Source::Shell,
         }
     }
 }

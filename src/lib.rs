@@ -2,6 +2,7 @@ pub mod classifier;
 pub mod daemon;
 pub mod event;
 pub mod installer;
+pub mod launch_agent;
 pub mod mapper;
 pub mod onboarding;
 pub mod paths;

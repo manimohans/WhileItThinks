@@ -8,6 +8,7 @@ WhileItThinks now targets Claude Code and Codex only:
 - Claude Desktop Code tab, through the same Claude Code user settings
 - Codex CLI
 - Codex Desktop app, through shared Codex agent configuration
+- Optional zsh Terminal commands, through a user-level shell snippet
 
 VS Code and Cursor are intentionally out of scope for this pass.
 
@@ -15,11 +16,11 @@ VS Code and Cursor are intentionally out of scope for this pass.
 
 `WhileItThinks.app` is a SwiftUI macOS app that embeds the Rust engine binaries:
 
-- `whileitthinksd`: local event daemon
+- `whileitthinksd`: local event receiver daemon
 - `whileitthinks-hook`: fail-open hook bridge called by Claude/Codex
 - `whileitthinks-cli`: installer/status/test CLI used by the app
 
-The app starts the daemon, requests notification permission for approval prompts, installs/uninstalls hooks, includes a setup tutorial, and reads daemon wait-state results to show a small non-modal overlay. Accessibility is not part of first-run setup; it remains an optional advanced control for future active-app/fullscreen suppression.
+The app manages a user LaunchAgent at `~/Library/LaunchAgents/com.whileitthinks.daemon.plist`, requests notification permission for approval prompts, installs/uninstalls hooks, includes a setup tutorial, and reads receiver wait-state results to show a small non-modal overlay. Accessibility is not part of first-run setup; it remains an optional advanced control for future active-app/fullscreen suppression.
 
 ## Claude Code Compatibility
 
@@ -51,8 +52,13 @@ Installed Codex events:
 - `PermissionRequest`
 - `Stop`
 
+## Shell Fallback Compatibility
+
+The optional zsh fallback writes a generated source file to `~/Library/Application Support/WhileItThinks/shell/zsh.zsh` and adds one marked source block to `~/.zshrc`. It uses zsh `preexec` and `precmd` hooks to send `shell_started` and `shell_finished` through `whileitthinks-hook --source shell`.
+
+The shell fallback passes command text through stdin with `--command-stdin`, not process arguments. Users must open a new Terminal tab after enabling it.
+
 ## Remaining Production Work
 
 - Sign and notarize `WhileItThinks.app`.
-- Replace the app-owned daemon process with a proper login item/helper before public release.
 - Add real smoke scripts for Claude CLI/Desktop and Codex CLI/Desktop after installing hooks on a test machine.

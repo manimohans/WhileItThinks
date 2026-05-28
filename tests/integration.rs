@@ -1,4 +1,6 @@
 use std::fs;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -26,6 +28,7 @@ fn map(
         event_name: event_name.to_string(),
         command: None,
         cwd: None,
+        session_id: None,
         exit_code: None,
         duration_ms: None,
         raw,
@@ -323,4 +326,189 @@ fn status_reports_stale_hook_paths() {
         vec![old_hook.to_string_lossy().to_string()]
     );
     assert!(status.note.contains("another app copy"));
+}
+
+#[test]
+fn shell_installer_creates_idempotent_zsh_fallback_and_uninstalls() {
+    let temp = TempDir::new().unwrap();
+    let zshrc = temp.path().join(".zshrc");
+    fs::write(&zshrc, "export EXISTING=1\n").unwrap();
+    let hook = temp
+        .path()
+        .join("WhileItThinks.app/Contents/MacOS/whileitthinks-hook");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "").unwrap();
+    let options = InstallOptions {
+        home: temp.path().to_path_buf(),
+        hook_path: hook.to_string_lossy().to_string(),
+    };
+
+    installer::install(Integration::Shell, &options).unwrap();
+    installer::install(Integration::Shell, &options).unwrap();
+    let status = installer::status_with_options(Integration::Shell, &options).unwrap();
+    assert!(status.installed);
+    assert!(status.configured);
+    assert_eq!(status.installed_hook_count, 1);
+
+    let zshrc_contents = fs::read_to_string(&zshrc).unwrap();
+    assert_eq!(
+        zshrc_contents
+            .matches("# >>> whileitthinks shell integration >>>")
+            .count(),
+        1
+    );
+    assert!(zshrc_contents.contains("export EXISTING=1"));
+
+    let source_path = temp
+        .path()
+        .join("Library/Application Support/WhileItThinks/shell/zsh.zsh");
+    let source = fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("--source shell"));
+    assert!(source.contains("--command-stdin"));
+    assert!(source.contains("--session-id"));
+
+    assert!(fs::read_dir(temp.path()).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .contains("whileitthinks-backup")));
+
+    installer::uninstall(Integration::Shell, &options).unwrap();
+    let zshrc_contents = fs::read_to_string(&zshrc).unwrap();
+    assert!(zshrc_contents.contains("export EXISTING=1"));
+    assert!(!zshrc_contents.contains("whileitthinks shell integration"));
+    assert!(!source_path.exists());
+}
+
+#[test]
+fn shell_installer_does_not_remove_unmatched_marker_content() {
+    let temp = TempDir::new().unwrap();
+    let zshrc = temp.path().join(".zshrc");
+    fs::write(
+        &zshrc,
+        "export BEFORE=1\n# >>> whileitthinks shell integration >>>\nexport AFTER=1\n",
+    )
+    .unwrap();
+    let hook = temp.path().join("whileitthinks-hook");
+    fs::write(&hook, "").unwrap();
+    let options = InstallOptions {
+        home: temp.path().to_path_buf(),
+        hook_path: hook.to_string_lossy().to_string(),
+    };
+
+    installer::install(Integration::Shell, &options).unwrap();
+    let contents = fs::read_to_string(&zshrc).unwrap();
+    assert!(contents.contains("export BEFORE=1"));
+    assert!(contents.contains("export AFTER=1"));
+    assert!(contents.contains("# >>> whileitthinks shell integration >>>"));
+    assert!(contents.contains("# <<< whileitthinks shell integration <<<"));
+}
+
+#[test]
+fn shell_status_reports_stale_hook_path() {
+    let temp = TempDir::new().unwrap();
+    let old_hook = temp.path().join("old/whileitthinks-hook");
+    fs::create_dir_all(old_hook.parent().unwrap()).unwrap();
+    fs::write(&old_hook, "").unwrap();
+    let new_hook = temp.path().join("new/whileitthinks-hook");
+    fs::create_dir_all(new_hook.parent().unwrap()).unwrap();
+    fs::write(&new_hook, "").unwrap();
+
+    let install_options = InstallOptions {
+        home: temp.path().to_path_buf(),
+        hook_path: old_hook.to_string_lossy().to_string(),
+    };
+    installer::install(Integration::Shell, &install_options).unwrap();
+
+    let current_options = InstallOptions {
+        home: temp.path().to_path_buf(),
+        hook_path: new_hook.to_string_lossy().to_string(),
+    };
+    let status = installer::status_with_options(Integration::Shell, &current_options).unwrap();
+    assert!(status.installed);
+    assert!(!status.configured);
+    assert_eq!(
+        status.stale_hook_paths,
+        vec![old_hook.to_string_lossy().to_string()]
+    );
+}
+
+#[test]
+fn shell_events_correlate_by_session_id() {
+    let store = EventStore::in_memory().unwrap();
+    let mut runtime = EventRuntime::new(store);
+    let start = map_hook(HookInput {
+        source: Source::Shell,
+        surface: Surface::Cli,
+        event_name: "shell_started".to_string(),
+        command: Some("sleep 12".to_string()),
+        cwd: Some("/tmp/project".to_string()),
+        session_id: Some("shell-session-1".to_string()),
+        exit_code: None,
+        duration_ms: None,
+        raw: serde_json::json!({}),
+    })
+    .remove(0);
+    let started = runtime.handle_event(start).unwrap();
+    assert_eq!(started.action.kind, WaitActionKind::Started);
+    assert_eq!(started.action.wait_state, Some(WaitState::CommandRunning));
+
+    let finish = map_hook(HookInput {
+        source: Source::Shell,
+        surface: Surface::Cli,
+        event_name: "shell_finished".to_string(),
+        command: Some("sleep 12".to_string()),
+        cwd: Some("/tmp/project".to_string()),
+        session_id: Some("shell-session-1".to_string()),
+        exit_code: Some(0),
+        duration_ms: Some(12_000),
+        raw: serde_json::json!({}),
+    })
+    .remove(0);
+    let finished = runtime.handle_event(finish).unwrap();
+    assert_eq!(finished.action.kind, WaitActionKind::Finished);
+    assert_eq!(finished.action.wait_state, Some(WaitState::CommandRunning));
+    assert!(finished.action.message.contains("finished in 12s"));
+}
+
+#[test]
+fn hook_binary_accepts_command_stdin_for_shell_events() {
+    let bin = std::env::var("CARGO_BIN_EXE_whileitthinks-hook")
+        .unwrap_or_else(|_| "target/debug/whileitthinks-hook".to_string());
+    let mut child = Command::new(bin)
+        .args([
+            "--source",
+            "shell",
+            "--surface",
+            "cli",
+            "--event",
+            "shell_started",
+            "--cwd",
+            "/tmp/project",
+            "--session-id",
+            "shell-session-stdin",
+            "--command-stdin",
+            "--print",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"pytest tests/private.py --token secret")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let events: Vec<whileitthinks::event::WhileItThinksEvent> =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(events[0].source, Source::Shell);
+    assert_eq!(events[0].kind, EventKind::ShellStarted);
+    assert_eq!(events[0].session_id.as_deref(), Some("shell-session-stdin"));
+    assert_eq!(
+        events[0].command.as_deref(),
+        Some("pytest tests/private.py --token secret")
+    );
 }
