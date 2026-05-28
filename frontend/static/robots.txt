@@ -1,13 +1,17 @@
 User-agent: *
+Disallow: /download/app
 Allow: /
 
 User-agent: OAI-SearchBot
+Disallow: /download/app
 Allow: /
 
 User-agent: GPTBot
+Disallow: /download/app
 Allow: /
 
 User-agent: ChatGPT-User
+Disallow: /download/app
 Allow: /
 
 Sitemap: https://whileitthinks.com/sitemap.xml

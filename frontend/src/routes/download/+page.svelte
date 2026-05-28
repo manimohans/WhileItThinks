@@ -1,7 +1,11 @@
 <script lang="ts">
+  import type { PageData } from './$types';
+
   const siteUrl = 'https://whileitthinks.com';
-  const downloadPath = '/downloads/WhileItThinks-0.1.0.dmg';
+  const appDmgPath = '/downloads/WhileItThinks-0.1.0.dmg';
+  const downloadPath = '/download/app';
   const checksumPath = '/downloads/WhileItThinks-0.1.0.dmg.sha256';
+  let { data }: { data: PageData } = $props();
 
   const installSteps = [
     'Download the DMG.',
@@ -17,7 +21,7 @@
     applicationCategory: 'DeveloperApplication',
     operatingSystem: 'macOS 14+',
     url: `${siteUrl}/download`,
-    downloadUrl: `${siteUrl}${downloadPath}`,
+    downloadUrl: `${siteUrl}${appDmgPath}`,
     description:
       'Download WhileItThinks, the local-first macOS app that gives break and return cues for Claude Code and Codex.',
     offers: {
@@ -73,8 +77,12 @@
         WhileItThinks gives developers a local break and return cue while Claude Code and Codex are
         busy. The first 1,000 installs are free.
       </p>
+      <p class="install-count">
+        <span>{data.installCount.toLocaleString()}</span>
+        launch installs claimed
+      </p>
       <div class="download-actions">
-        <a class="button button-primary" href={downloadPath} download>Download DMG</a>
+        <a class="button button-primary" href={downloadPath} rel="nofollow">Download DMG</a>
         <a class="button button-secondary" href={checksumPath}>View checksum</a>
       </div>
     </div>
@@ -82,7 +90,10 @@
     <div class="license-card" aria-label="Launch pricing">
       <span>Lifetime license</span>
       <strong>First 1,000 installs: free</strong>
-      <p>Then pricing steps up by $1 every 1,000 installs: $0.99, $1.99, $2.99, and so on.</p>
+      <p>
+        {data.installCount.toLocaleString()} installs claimed. Then pricing steps up by $1 every
+        1,000 installs: $0.99, $1.99, $2.99, and so on.
+      </p>
     </div>
   </section>
 
@@ -208,6 +219,28 @@
     flex-wrap: wrap;
     gap: 14px;
     margin-top: 28px;
+  }
+
+  .install-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0 0;
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    padding: 8px 14px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 800;
+    line-height: 1.2;
+    box-shadow: 4px 4px 0 rgba(12, 25, 30, 0.16);
+  }
+
+  .install-count span {
+    color: var(--ink);
+    font-family: var(--analog);
+    font-weight: 950;
   }
 
   .button {

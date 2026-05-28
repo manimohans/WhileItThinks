@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { PageData } from './$types';
   import { onMount } from 'svelte';
 
   const siteUrl = 'https://whileitthinks.com';
@@ -119,7 +120,8 @@
     `ipt type="application/ld+json">${faqJsonLd}</scr` +
     'ipt>';
 
-  let activeState = 0;
+  let activeState = $state(0);
+  let { data }: { data: PageData } = $props();
 
   onMount(() => {
     const interval = window.setInterval(() => {
@@ -191,6 +193,11 @@
         <a class="button button-primary" href="/download">Download free launch build</a>
         <a class="button button-secondary" href="#workflow">See how it works</a>
       </div>
+
+      <p class="install-count">
+        <span>{data.installCount.toLocaleString()}</span>
+        launch installs claimed
+      </p>
 
       <ul class="proof-list" aria-label="Product proof points">
         {#each proofPoints as point}
@@ -299,8 +306,9 @@
       <p class="eyebrow">Launch pricing</p>
       <h2 id="pricing-title">Start free. Keep the license for life.</h2>
       <p>
-        The first 1,000 installs are free. After that, the lifetime license price increases by $1
-        every 1,000 installs: $0.99, $1.99, $2.99, and so on.
+        <strong>{data.installCount.toLocaleString()} installs claimed.</strong> The first 1,000
+        installs are free. After that, the lifetime license price increases by $1 every 1,000
+        installs: $0.99, $1.99, $2.99, and so on.
       </p>
     </div>
     <a class="button button-primary" href="/download">Get the Mac app</a>
@@ -544,6 +552,28 @@
     list-style: none;
   }
 
+  .install-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 22px;
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    padding: 8px 14px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 800;
+    line-height: 1.2;
+    box-shadow: 4px 4px 0 rgba(12, 25, 30, 0.16);
+  }
+
+  .install-count span {
+    color: var(--ink);
+    font-family: var(--analog);
+    font-weight: 950;
+  }
+
   .proof-list li {
     position: relative;
     padding-left: 22px;
@@ -758,6 +788,10 @@
   .pricing-section p {
     max-width: 720px;
     font-size: clamp(1.04rem, 1.5vw, 1.18rem);
+  }
+
+  .pricing-section strong {
+    color: var(--ink);
   }
 
   .benefit-grid {
