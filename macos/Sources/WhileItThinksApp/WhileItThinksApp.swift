@@ -469,14 +469,14 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 7_000_000_000)
         let finish = await runCLI(["test-event", "--source", "claude-code", "--event", "agent_stopped", "--command", ""])
         lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
-        postNotification(title: "WhileItThinks test", body: "Synthetic AI generation completed.")
+        lastActionSummary = "Synthetic AI generation finished. Completion notifications are intentionally silent."
     }
 
     func sendTestPermissionEvent() async {
         await ensureDaemonRunning()
         let claude = await runCLI(["test-event", "--source", "claude-code", "--event", "permission_requested", "--command", ""])
         lastOutput = claude.display
-        postNotification(title: "WhileItThinks test", body: "Synthetic permission event sent.")
+        lastActionSummary = "Synthetic permission event sent. Approval alerts may use a system notification."
     }
 
     private func sendSyntheticShellEvent(source: String, label: String, command: String, simulatedSeconds: UInt64) async {
@@ -487,7 +487,7 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(nanoseconds: simulatedSeconds * 1_000_000_000)
         let finish = await runCLI(["test-event", "--source", source, "--event", "shell_finished", "--command", command])
         lastOutput = [start.display, finish.display].filter { !$0.isEmpty }.joined(separator: "\n")
-        postNotification(title: "WhileItThinks test", body: "\(label) completed.")
+        lastActionSummary = "\(label) synthetic finish sent. Completion notifications are intentionally silent."
     }
 
     private func refreshNotificationStatus() async {
@@ -646,7 +646,6 @@ final class AppModel: ObservableObject {
             scheduleOverlayIfStillWaiting(json: json, action: action, message: message)
         } else if kind == "finished" {
             finishOverlay(json: json)
-            postNotification(title: "WhileItThinks", body: message)
         } else if kind == "permission" {
             postNotification(title: "Approval needed", body: message)
         }
@@ -1756,7 +1755,7 @@ private struct TutorialView: View {
             TutorialStep(number: "1", title: "Put the app in Applications", text: "Keep WhileItThinks.app in /Applications before enabling hooks. Claude and Codex store an absolute path to the bundled hook binary.")
             TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
             TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
-            TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for completion and permission alerts. The daemon and hooks work without cloud services.")
+            TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
             TutorialStep(number: "5", title: "Accessibility is optional", text: "Use it only for active-app/fullscreen suppression. Hook-based Claude and Codex detection does not require Accessibility.")
             TutorialStep(number: "6", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
         }
@@ -1902,10 +1901,16 @@ private struct TimingSettingsCard: View {
                 SectionTitle("When should the overlay appear?", subtitle: "These are delays after real Claude/Codex wait states start. They are not repeating reminders.")
                     .layoutPriority(1)
                 Spacer()
-                Button("Reset Defaults") {
+                Button {
                     model.resetOverlayTimingDefaults()
+                } label: {
+                    Text("Reset Defaults")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(TonalButtonStyle(tone: .neutral))
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
             }
 
             TimingExplanationCard(aiDelayText: model.formattedPlainDuration(model.aiOverlayDelaySeconds))

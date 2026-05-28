@@ -15,7 +15,7 @@ pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
    This covers Codex CLI and Codex Desktop app agents because app agents inherit the same configuration as the IDE and CLI extension.
 
 4. Allow notifications.
-   Notifications are used for completion and permission-request alerts. No account or cloud sync is used.
+   Notifications are used only for approval prompts that need your attention. Finished commands stay silent. No account or cloud sync is used.
 
 5. Accessibility is optional.
    Enable Accessibility only if you want smart active-app/fullscreen suppression later. Claude/Codex hook ingestion does not require it.
