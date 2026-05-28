@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/logo.svg" width="128" alt="WhileItThinks raccoon logo">
+  <img src="assets/logo.svg" width="128" alt="Blink, the WhileItThinks raccoon">
 </p>
 
 <h1 align="center">WhileItThinks</h1>
 
 <p align="center">
   <strong>Your AI agent is thinking. Your eyes should rest.</strong><br>
-  A local-first macOS wait-state router for Claude Code and Codex.
+  Blink is the small local overlay for Claude Code and Codex wait states.
 </p>
 
 <p align="center">
@@ -76,7 +76,7 @@ Then open the URL printed by Vite, usually `http://localhost:5173/`.
 
 ## What It Does
 
-WhileItThinks watches real developer wait states instead of running a dumb timer. It listens for Claude Code and Codex lifecycle events, classifies the work that is already making you wait, and shows a tiny local overlay when it is a good moment to look away.
+WhileItThinks watches real developer wait states instead of running a dumb timer. It listens for Claude Code and Codex lifecycle events, classifies the work that is already making you wait, and shows Blink when it is a good moment to look away.
 
 Current launch scope:
 
@@ -205,7 +205,7 @@ Overlay timing is adjustable in the app's Settings page. Recommended defaults:
 - Generic shell commands: 10 seconds
 - Overlay cooldown after showing: 240 seconds
 
-Microbreak prompts rotate through eye rest, distance focus, posture, stretching, standing, walking, breathing, and blink ideas. Blink-specific prompts are spaced out separately, defaulting to once every 10 minutes, and can be changed in Settings.
+Blink rotates through microbreak prompts for eye rest, distance focus, posture, stretching, standing, walking, breathing, and blinking. Eye-blink-specific prompts are spaced out separately, defaulting to once every 10 minutes, and can be changed in Settings.
 
 ## Privacy Defaults
 

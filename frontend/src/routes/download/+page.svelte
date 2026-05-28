@@ -2,7 +2,7 @@
   <title>Download WhileItThinks</title>
   <meta
     name="description"
-    content="Download WhileItThinks, a local-first macOS companion for Claude Code and Codex wait states."
+    content="Download WhileItThinks, the local-first macOS app where Blink watches Claude Code and Codex wait states."
   />
   <link rel="icon" href="/logo.svg" type="image/svg+xml" />
 </svelte:head>
@@ -22,9 +22,10 @@
     </p>
     <div class="pricing-card" aria-label="Early access pricing">
       <span>Lifetime license</span>
-      <strong>First 100 users: free</strong>
-      <strong>Users 101-1,000: $0.99</strong>
-      <strong>After that: $4.99</strong>
+      <strong>Installs 1-1,000: free</strong>
+      <strong>Installs 1,001-2,000: $0.99</strong>
+      <strong>Installs 2,001-3,000: $1.99</strong>
+      <strong>Then +$1 every 1,000 installs</strong>
     </div>
     <div class="download-actions">
       <button class="button button-primary" type="button" disabled>Coming soon</button>

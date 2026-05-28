@@ -251,7 +251,7 @@ final class AppModel: ObservableObject {
     }
 
     var microbreakSummary: String {
-        "\(Self.microbreakPrompts.count) rotating ideas. Blink prompts can appear at most once every \(formattedPlainDuration(blinkPromptIntervalSeconds))."
+        "\(Self.microbreakPrompts.count) rotating ideas. Eye-blink prompts can appear at most once every \(formattedPlainDuration(blinkPromptIntervalSeconds))."
     }
 
     var codexTrustStatusText: String {
@@ -1241,7 +1241,7 @@ private struct OverlayBanner: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("The raccoon is on watch")
+                        Text("Blink is on watch")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.green)
                         Text(content.status)
@@ -1988,10 +1988,10 @@ private struct HeroPanel: View {
         HStack(alignment: .center, spacing: 18) {
             RaccoonBlinkingAvatar(size: 82)
             VStack(alignment: .leading, spacing: 6) {
-                Text("WhileItThinks")
+                Text("Hey, I'm Blink.")
                     .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(AppTheme.ink)
-                Text("Claude Code or Codex is thinking. Your eyes get the break.")
+                Text("I watch Claude Code and Codex waits, then show up when looking away actually helps.")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2225,10 +2225,10 @@ private struct TutorialView: View {
             TutorialStep(number: "3", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
             TutorialStep(number: "4", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
             TutorialStep(number: "5", title: "Optional Terminal commands", text: "Turn on Terminal commands only if you want manually typed zsh commands to count as waits. Open a new Terminal tab after enabling it.")
-            TutorialStep(number: "6", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
+            TutorialStep(number: "6", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; Blink handles the break overlay.")
             TutorialStep(number: "7", title: "Accessibility is not required", text: "Claude, Codex, Terminal command detection, and the background receiver work without Accessibility. Leave it off unless you want future active-app/fullscreen suppression controls in Settings.")
-            TutorialStep(number: "8", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
-            TutorialStep(number: "9", title: "Microbreaks rotate", text: "The overlay cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Blink-specific prompts are spaced out in Settings so they do not show every time.")
+            TutorialStep(number: "8", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, Blink appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
+            TutorialStep(number: "9", title: "Microbreaks rotate", text: "Blink cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Eye-blink prompts are spaced out in Settings so they do not show every time.")
         }
     }
 }
@@ -2482,7 +2482,7 @@ private struct TimingExplanationCard: View {
             Text("Most people should leave the defaults alone.")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(AppTheme.green)
-            Text("Example: if AI thinking is set to \(aiDelayText), a quick 3-second reply shows nothing. If the agent is still working after \(aiDelayText), the raccoon appears and closes when the work finishes.")
+            Text("Example: if AI thinking is set to \(aiDelayText), a quick 3-second reply shows nothing. If the agent is still working after \(aiDelayText), Blink appears and closes when the work finishes.")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AppTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2548,7 +2548,7 @@ private struct MicrobreakSettingsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                SectionTitle("What should the raccoon suggest?", subtitle: "Each overlay rotates through small eye, posture, standing, walking, and stretch prompts.")
+                SectionTitle("What should Blink suggest?", subtitle: "Each overlay rotates through small eye, posture, standing, walking, and stretch prompts.")
                     .layoutPriority(1)
                 Spacer()
                 Button {
@@ -2570,7 +2570,7 @@ private struct MicrobreakSettingsCard: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Blink prompts are useful, but annoying if they appear every time. This setting spaces out blink-specific prompts while other movement prompts keep rotating.")
+                Text("Eye-blink prompts are useful, but annoying if they appear every time. This setting spaces them out while other movement prompts keep rotating.")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2587,10 +2587,10 @@ private struct MicrobreakSettingsCard: View {
             ), in: 1...60, step: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Blink prompt spacing")
+                        Text("Eye-blink prompt spacing")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(AppTheme.ink)
-                        Text("Minimum time before another blink-specific suggestion can appear.")
+                        Text("Minimum time before another eye-blink suggestion can appear.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(AppTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)

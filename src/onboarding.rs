@@ -21,7 +21,7 @@ pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
    Turn on Terminal commands if you want manually typed zsh commands to count as waits. Open a new Terminal tab after enabling it.
 
 6. Allow notifications.
-   Notifications are used only for approval prompts that need your attention. Finished commands stay silent. No account or cloud sync is used.
+   Notifications are used only for approval prompts that need your attention. Finished commands stay silent. Blink handles the local break overlay. No account or cloud sync is used.
 
 7. Accessibility is not required.
    Claude/Codex hook ingestion, Terminal command detection, and the local receiver do not require Accessibility. Leave it off unless you want to try future active-app/fullscreen suppression controls in Settings.

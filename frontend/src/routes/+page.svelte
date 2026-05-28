@@ -68,10 +68,10 @@
 </script>
 
 <svelte:head>
-  <title>WhileItThinks | A tiny break buddy for Claude Code and Codex</title>
+  <title>WhileItThinks | Blink watches Claude Code and Codex waits</title>
   <meta
     name="description"
-    content="WhileItThinks is a local-first macOS app that gives developers tiny break and return cues while Claude Code and Codex are busy."
+    content="WhileItThinks is a local-first macOS app where Blink gives developers tiny break and return cues while Claude Code and Codex are busy."
   />
   <link rel="icon" href="/logo.svg" type="image/svg+xml" />
 </svelte:head>
@@ -108,15 +108,15 @@
         about your work, clear when you should come back.
       </p>
       <p class="pricing-note">
-        Lifetime license: free for the first 100 users, $0.99 for users 101-1,000,
-        then $4.99.
+        Lifetime license with install-based launch pricing: first 1,000 installs are free,
+        then it steps up by $1 every 1,000 installs: $0.99, $1.99, $2.99, and so on.
       </p>
     </div>
 
     <div
       class="motion-stage"
       role="group"
-      aria-label="Animated WhileItThinks raccoon supervising agent work"
+      aria-label="Animated Blink raccoon supervising agent work"
       onpointermove={handleTilt}
       onpointerleave={resetTilt}
     >
@@ -132,8 +132,8 @@
         </div>
 
         <svg class="sleep-raccoon" viewBox="0 0 430 360" role="img" aria-labelledby="raccoon-title raccoon-desc">
-          <title id="raccoon-title">A sleepy WhileItThinks raccoon</title>
-          <desc id="raccoon-desc">The WhileItThinks raccoon blinks and stretches while Claude Code and Codex run in the background.</desc>
+          <title id="raccoon-title">Blink, the WhileItThinks raccoon</title>
+          <desc id="raccoon-desc">Blink stretches while Claude Code and Codex run in the background.</desc>
 
           <path class="angle-band band-blue" d="M16 62H332L292 128H16Z" />
           <path class="angle-band band-coral" d="M292 128H414L374 198H252Z" />
@@ -209,8 +209,8 @@
       </article>
       <article class="flow-card flow-amber">
         <span>02</span>
-        <h3>The cue appears</h3>
-        <p>When there is a real wait, it gives you a tiny cue instead of making you stare.</p>
+        <h3>Only real waits</h3>
+        <p>When there is a real wait, Blink gives you a tiny cue instead of making you stare.</p>
       </article>
       <article class="flow-card flow-coral">
         <span>03</span>
@@ -225,7 +225,7 @@
       <p class="eyebrow">Workflow sketch</p>
       <h2 id="signals-title">Ask, step away, come back.</h2>
       <p>
-        No extra dashboard to watch. Just a small local companion that turns agent waits into a
+        No extra dashboard to watch. Just Blink, a small local companion that turns agent waits into a
         cleaner loop.
       </p>
     </div>
@@ -250,8 +250,8 @@
           <img src="/logo.svg" alt="" width="52" height="52" />
         </div>
         <div class="notification-copy">
-          <span>WhileItThinks</span>
-          <strong>Blink. Shoulders down.</strong>
+          <span>Blink</span>
+          <strong>Shoulders down.</strong>
           <p>Claude Code / Codex is still busy.</p>
         </div>
         <div class="notification-state" aria-hidden="true">
@@ -942,6 +942,8 @@
     justify-self: start;
     width: min(100%, 720px);
     z-index: 2;
+    transform-origin: 48% 70%;
+    animation: terminal-work-shift 8s ease-in-out infinite;
   }
 
   .window-bar {
@@ -1002,6 +1004,7 @@
     overflow: hidden;
     color: var(--amber);
     white-space: nowrap;
+    animation: prompt-settle 8s ease-in-out infinite;
   }
 
   .typed-line::after {
@@ -1045,7 +1048,8 @@
       linear-gradient(145deg, rgba(185, 232, 255, 0.82), rgba(255, 228, 217, 0.62)),
       var(--surface);
     z-index: 3;
-    animation: companion-float 6.5s ease-in-out infinite;
+    transform-origin: 16% 0%;
+    animation: companion-pop-out 8s ease-in-out infinite;
   }
 
   .notification-raccoon img {
@@ -1319,13 +1323,65 @@
     }
   }
 
-  @keyframes companion-float {
+  @keyframes terminal-work-shift {
     0%,
     100% {
-      transform: translateY(0);
+      transform: translateY(0) rotate(0deg);
     }
-    50% {
-      transform: translateY(-3px);
+    18% {
+      transform: translateY(-3px) rotate(-0.18deg);
+    }
+    34% {
+      transform: translateY(1px) rotate(0.12deg);
+    }
+    64% {
+      transform: translateY(-2px) rotate(0.1deg);
+    }
+    82% {
+      transform: translateY(0) rotate(-0.08deg);
+    }
+  }
+
+  @keyframes prompt-settle {
+    0%,
+    18%,
+    100% {
+      transform: translateX(0);
+    }
+    24% {
+      transform: translateX(4px);
+    }
+    31% {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes companion-pop-out {
+    0%,
+    26% {
+      opacity: 0;
+      transform: translate(-28px, -54px) scale(0.88) rotate(-1.5deg);
+    }
+    34% {
+      opacity: 1;
+      transform: translate(5px, 4px) scale(1.02) rotate(0.7deg);
+    }
+    42% {
+      opacity: 1;
+      transform: translate(0, 0) scale(1) rotate(0deg);
+    }
+    62% {
+      opacity: 1;
+      transform: translateY(-3px) scale(1) rotate(0deg);
+    }
+    80% {
+      opacity: 1;
+      transform: translateY(1px) scale(1) rotate(0deg);
+    }
+    92%,
+    100% {
+      opacity: 0;
+      transform: translate(18px, -18px) scale(0.96) rotate(0.5deg);
     }
   }
 
@@ -1402,6 +1458,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .terminal-window,
+    .typed-line,
     .typed-line::after,
     .terminal-status p,
     .companion-window,
