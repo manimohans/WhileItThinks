@@ -1,0 +1,57 @@
+@font-face {
+  font-family: "Analog Mono";
+  src: url("/fonts/analog-mono/AnalogMono.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  --page: #f6fbff;
+  --surface: #fffefa;
+  --ink: #10221f;
+  --muted: #5f6f6b;
+  --line: #14231f;
+  --shadow: #0d1c18;
+  --blue: #b9e8ff;
+  --blue-soft: #e3f6ff;
+  --coral: #ff6a57;
+  --coral-soft: #ffe4d9;
+  --amber: #ffc247;
+  --amber-soft: #ffe4a3;
+  --fur: #b87958;
+  --analog: "Analog Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  max-width: 100%;
+  overflow-x: clip;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: clip;
+  background:
+    linear-gradient(124deg, transparent 0 58%, rgba(113, 211, 255, 0.16) 58% 70%, transparent 70%),
+    linear-gradient(22deg, transparent 0 66%, rgba(255, 106, 87, 0.1) 66% 75%, transparent 75%),
+    var(--page);
+  color: var(--ink);
+  font-family: var(--analog);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  overflow-wrap: anywhere;
+}

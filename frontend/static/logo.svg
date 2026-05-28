@@ -1,0 +1,26 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">WhileItThinks logo</title>
+  <desc id="desc">A character face on a dark rounded square background.</desc>
+  <rect width="256" height="256" rx="46" fill="#132126"/>
+  <circle cx="188" cy="60" r="34" fill="#10B981" fill-opacity="0.16"/>
+  <path d="M70 80L32 38L45 120Z" fill="#202A2C"/>
+  <path d="M186 80L224 38L211 120Z" fill="#202A2C"/>
+  <path d="M70 83L43 51L52 112Z" fill="#9B806D" fill-opacity="0.72"/>
+  <path d="M186 83L213 51L204 112Z" fill="#9B806D" fill-opacity="0.72"/>
+  <ellipse cx="128" cy="137" rx="82" ry="70" fill="#B9C6C1"/>
+  <path d="M63 124C79 98 105 94 128 119C151 94 177 98 193 124C177 154 151 157 128 136C105 157 79 154 63 124Z" fill="#263335"/>
+  <ellipse cx="128" cy="166" rx="45" ry="29" fill="#E9DEC4"/>
+  <circle cx="101" cy="126" r="13" fill="#F7F7E8"/>
+  <circle cx="155" cy="126" r="13" fill="#F7F7E8"/>
+  <circle cx="101" cy="126" r="6" fill="#11191B"/>
+  <circle cx="155" cy="126" r="6" fill="#11191B"/>
+  <ellipse cx="128" cy="154" rx="16" ry="10" fill="#11191B"/>
+  <path d="M96 169L48 178" stroke="#7A817D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 181L52 194" stroke="#7A817D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M160 169L208 178" stroke="#7A817D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M160 181L204 194" stroke="#7A817D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M118 188H138" stroke="#7A5D46" stroke-width="4" stroke-linecap="round"/>
+  <path d="M104 48L92 22" stroke="#E7B43F" stroke-width="8" stroke-linecap="round"/>
+  <path d="M128 42V14" stroke="#E7B43F" stroke-width="8" stroke-linecap="round"/>
+  <path d="M152 48L164 22" stroke="#E7B43F" stroke-width="8" stroke-linecap="round"/>
+</svg>

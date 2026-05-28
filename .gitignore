@@ -2,6 +2,10 @@
 /dist/
 /macos/.build/
 /macos/.swiftpm/
+/frontend/node_modules/
+/frontend/.vercel/
+/frontend/.svelte-kit/
+/frontend/build/
 __pycache__/
 *.pyc
 .DS_Store
