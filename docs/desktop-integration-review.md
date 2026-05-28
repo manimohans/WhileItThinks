@@ -19,7 +19,7 @@ VS Code and Cursor are intentionally out of scope for this pass.
 - `whileitthinks-hook`: fail-open hook bridge called by Claude/Codex
 - `whileitthinks-cli`: installer/status/test CLI used by the app
 
-The app starts the daemon, requests notifications, offers optional Accessibility permission, installs/uninstalls hooks, includes a setup tutorial, and reads daemon wait-state results to show a small non-modal overlay plus local completion/approval notifications.
+The app starts the daemon, requests notification permission for approval prompts, installs/uninstalls hooks, includes a setup tutorial, and reads daemon wait-state results to show a small non-modal overlay. Accessibility is not part of first-run setup; it remains an optional advanced control for future active-app/fullscreen suppression.
 
 ## Claude Code Compatibility
 

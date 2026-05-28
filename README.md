@@ -56,7 +56,7 @@ In the app:
 5. For Claude Code, no extra trust step is required.
 6. For Codex, open Terminal, run `codex`, type `/hooks` in the Codex CLI, review WhileItThinks, and trust the hooks. Codex Desktop does not currently expose the hook browser command in its chat UI.
 
-Accessibility is optional. It is only for active-app/fullscreen suppression work; Claude and Codex wait-state detection does not require it.
+Accessibility is not required for setup. Claude and Codex wait-state detection works without it. The optional control in Settings is only for future active-app/fullscreen suppression work.
 
 ## What It Does
 
@@ -168,7 +168,7 @@ Overlay timing is adjustable in the app's Settings page. Recommended defaults:
 - AI generation: 6 seconds
 - Build/test/install/Docker/Xcode waits: 5 seconds
 - Generic shell commands: 10 seconds
-- Overlay cooldown after showing: 120 seconds
+- Overlay cooldown after showing: 240 seconds
 
 Microbreak prompts rotate through eye rest, distance focus, posture, stretching, standing, walking, breathing, and blink ideas. Blink-specific prompts are spaced out separately, defaulting to once every 10 minutes, and can be changed in Settings.
 

@@ -17,8 +17,8 @@ pub const DESKTOP_APP_GUIDE: &str = r#"WhileItThinks setup
 4. Allow notifications.
    Notifications are used only for approval prompts that need your attention. Finished commands stay silent. No account or cloud sync is used.
 
-5. Accessibility is optional.
-   Enable Accessibility only if you want smart active-app/fullscreen suppression later. Claude/Codex hook ingestion does not require it.
+5. Accessibility is not required.
+   Claude/Codex hook ingestion does not require Accessibility. Leave it off unless you want to try future active-app/fullscreen suppression controls in Settings.
 
 Privacy defaults:
 WhileItThinks stores sanitized local metadata only: source, event kind, duration, exit code, command category, and hashed project/session identifiers. It does not store prompts, assistant text, file contents, shell output, or raw command arguments by default.

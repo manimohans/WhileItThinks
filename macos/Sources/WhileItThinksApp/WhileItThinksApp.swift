@@ -94,7 +94,7 @@ private enum OverlayTimingDefaults {
     static let aiDelay = 6
     static let workDelay = 5
     static let commandDelay = 10
-    static let cooldown = 120
+    static let cooldown = 240
 }
 
 private enum MicrobreakDefaults {
@@ -1682,26 +1682,14 @@ private struct PermissionStatusStrip: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(spacing: 12) {
-            PermissionStatusCard(
-                title: "Notifications",
-                value: model.notificationStatus,
-                tone: model.notificationStatus == "Enabled" ? .good : .neutral,
-                actionTitle: model.notificationStatus == "Enabled" ? nil : "Allow",
-                actionIcon: "bell.badge.fill"
-            ) {
-                Task { await model.requestNotifications() }
-            }
-
-            PermissionStatusCard(
-                title: "Accessibility",
-                value: model.accessibilityStatus,
-                tone: model.accessibilityStatus == "Granted" ? .good : .neutral,
-                actionTitle: model.accessibilityStatus == "Granted" ? "Open" : "Grant",
-                actionIcon: "hand.raised.fill"
-            ) {
-                model.requestAccessibility()
-            }
+        PermissionStatusCard(
+            title: "Notifications",
+            value: model.notificationStatus,
+            tone: model.notificationStatus == "Enabled" ? .good : .neutral,
+            actionTitle: model.notificationStatus == "Enabled" ? nil : "Allow",
+            actionIcon: "bell.badge.fill"
+        ) {
+            Task { await model.requestNotifications() }
         }
     }
 }
@@ -1897,7 +1885,7 @@ private struct TutorialView: View {
             TutorialStep(number: "2", title: "Turn on Claude Code", text: "The app merges hooks into ~/.claude/settings.json, preserves existing settings, and writes a timestamped backup. Claude Code CLI and the Claude Desktop Code tab both read user settings. No separate Claude trust step is required.")
             TutorialStep(number: "3", title: "Turn on Codex", text: "The app writes ~/.codex/hooks.json and leaves ~/.codex/config.toml alone. Then open Terminal, run codex, type /hooks in the Codex CLI, review WhileItThinks, and trust the command hooks once. Codex Desktop does not expose /hooks in chat.")
             TutorialStep(number: "4", title: "Allow notifications", text: "Notifications are only for approval prompts that need your attention. Finished commands stay silent; the blink reminder is the overlay.")
-            TutorialStep(number: "5", title: "Accessibility is optional", text: "Use it only for active-app/fullscreen suppression. Hook-based Claude and Codex detection does not require Accessibility.")
+            TutorialStep(number: "5", title: "Accessibility is not required", text: "Claude and Codex wait detection works without Accessibility. Leave it off unless you want to try future active-app/fullscreen suppression controls in Settings.")
             TutorialStep(number: "6", title: "Leave timing alone at first", text: "The seconds in Settings are simple delays. If AI thinking is 6 seconds, the raccoon appears only when Claude or Codex is still working after 6 seconds. Fast replies do not show anything.")
             TutorialStep(number: "7", title: "Microbreaks rotate", text: "The overlay cycles through short ideas like looking far away, stretching, standing up, walking, breathing, and blinking. Blink-specific prompts are spaced out in Settings so they do not show every time.")
         }
@@ -2005,6 +1993,7 @@ private struct SettingsView: View {
 
                 TimingSettingsCard()
                 MicrobreakSettingsCard()
+                AdvancedSettingsCard()
 
                 VStack(alignment: .leading, spacing: 10) {
                     SectionTitle("App", subtitle: "Local startup and health controls.")
@@ -2101,7 +2090,7 @@ private struct TimingSettingsCard: View {
                 title: "Quiet time after an overlay",
                 detail: "After the overlay appears once, wait this long before showing another one. This prevents back-to-back nudges.",
                 valueText: model.formattedPlainDuration(model.overlayCooldownSeconds),
-                recommendedText: "Recommended: 2 minutes",
+                recommendedText: "Recommended: 4 minutes",
                 value: Binding(
                     get: { model.overlayCooldownSeconds },
                     set: { model.setOverlayTiming(.cooldown, seconds: $0) }
@@ -2145,6 +2134,53 @@ private struct TimingExplanationCard: View {
         .background(AppTheme.green.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.green.opacity(0.16), lineWidth: 1))
+    }
+}
+
+private struct AdvancedSettingsCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("Advanced", subtitle: "Optional controls that are not needed for Claude/Codex hooks.")
+
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(model.accessibilityStatus == "Granted" ? AppTheme.green : AppTheme.muted)
+                    .frame(width: 26)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Accessibility permission")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                    Text("Not required for setup. WhileItThinks only needs this later if you enable active-app or fullscreen suppression, such as avoiding overlays during calls or video.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Current status: \(model.accessibilityStatus)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(model.accessibilityStatus == "Granted" ? AppTheme.green : AppTheme.muted)
+                }
+
+                Spacer(minLength: 10)
+
+                Button {
+                    model.requestAccessibility()
+                } label: {
+                    Text("Open Settings")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(TonalButtonStyle(tone: .neutral))
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.76))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line, lineWidth: 1))
     }
 }
 
