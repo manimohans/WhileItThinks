@@ -3,7 +3,6 @@
 
   const siteUrl = 'https://whileitthinks.com';
   const downloadPath = '/download/app';
-  const checksumPath = '/downloads/WhileItThinks-0.1.0.dmg.sha256';
   let { data }: { data: PageData } = $props();
   let email = $state('');
   let downloadLink = $state('');
@@ -191,7 +190,6 @@
             {/if}
           </form>
         {/if}
-        <a class="button button-secondary" href={checksumPath}>View checksum</a>
       </div>
     </div>
 
@@ -434,10 +432,6 @@
 
   .button-primary {
     background: var(--amber);
-  }
-
-  .button-secondary {
-    background: var(--surface);
   }
 
   .license-card {
