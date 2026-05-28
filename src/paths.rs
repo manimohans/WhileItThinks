@@ -38,9 +38,9 @@ pub fn actions_log_path() -> PathBuf {
 }
 
 pub fn default_installed_hook_path() -> String {
-    format!("/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-hook")
+    "/Applications/WhileItThinks.app/Contents/MacOS/whileitthinks-hook".to_string()
 }
 
 pub fn default_installed_daemon_path() -> String {
-    format!("/Applications/WhileItThinks.app/Contents/MacOS/whileitthinksd")
+    "/Applications/WhileItThinks.app/Contents/MacOS/whileitthinksd".to_string()
 }

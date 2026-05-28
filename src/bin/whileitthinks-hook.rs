@@ -91,10 +91,18 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
 
     for event in events {
-        if let Err(error) = send_event(&event).await {
-            if args.verbose {
+        match send_event(&event).await {
+            Ok(delivery) if args.verbose => {
+                eprintln!(
+                    "whileitthinks-hook: delivered via {:?} to {}",
+                    delivery.channel, delivery.endpoint
+                );
+            }
+            Ok(_) => {}
+            Err(error) if args.verbose => {
                 eprintln!("whileitthinks-hook: send failed: {error:#}");
             }
+            Err(_) => {}
         }
     }
     Ok(())

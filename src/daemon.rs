@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::event::WhileItThinksEvent;
 use crate::sanitize::{sanitize_event, SanitizedEvent};
-use crate::storage::EventStore;
+use crate::storage::{EventStore, StorageHealth};
 use crate::wait_state::{WaitAction, WaitStateEngine};
 
 pub struct EventRuntime {
@@ -15,6 +15,13 @@ pub struct RuntimeResult {
     pub ok: bool,
     pub sanitized: SanitizedEvent,
     pub action: WaitAction,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RuntimeHealth {
+    pub ok: bool,
+    pub active_wait_count: usize,
+    pub storage: StorageHealth,
 }
 
 impl EventRuntime {
@@ -33,6 +40,15 @@ impl EventRuntime {
             ok: true,
             sanitized,
             action,
+        })
+    }
+
+    pub fn health(&self) -> anyhow::Result<RuntimeHealth> {
+        let storage = self.store.health()?;
+        Ok(RuntimeHealth {
+            ok: storage.ok,
+            active_wait_count: self.engine.active_count(),
+            storage,
         })
     }
 }

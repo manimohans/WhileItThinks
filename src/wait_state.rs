@@ -34,6 +34,10 @@ struct ActiveWait {
 }
 
 impl WaitStateEngine {
+    pub fn active_count(&self) -> usize {
+        self.active.len()
+    }
+
     pub fn apply(&mut self, event: &WhileItThinksEvent) -> WaitAction {
         match event.kind {
             EventKind::AgentStarted | EventKind::PromptSubmitted => {

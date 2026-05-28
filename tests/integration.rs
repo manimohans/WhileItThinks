@@ -1,9 +1,13 @@
 use std::fs;
 use std::io::Write;
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tempfile::TempDir;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use whileitthinks::classifier::classify_command;
 use whileitthinks::daemon::EventRuntime;
 use whileitthinks::event::{EventKind, Source, Surface, WaitState};
@@ -11,6 +15,7 @@ use whileitthinks::installer::{self, InstallOptions, Integration};
 use whileitthinks::mapper::{map_hook, HookInput};
 use whileitthinks::sanitize::sanitize_event;
 use whileitthinks::storage::EventStore;
+use whileitthinks::transport::{send_event_http_addr, send_event_to_endpoints, DeliveryChannel};
 use whileitthinks::wait_state::WaitActionKind;
 
 fn fixture(path: &str) -> Value {
@@ -182,6 +187,55 @@ fn runtime_persists_sanitized_event_and_wait_action() {
     );
     assert_eq!(result.action.kind, WaitActionKind::Started);
     assert_eq!(result.action.wait_state, Some(WaitState::TestRunning));
+}
+
+#[test]
+fn runtime_health_reports_storage_and_active_waits() {
+    let store = EventStore::in_memory().unwrap();
+    let mut runtime = EventRuntime::new(store);
+    let initial = runtime.health().unwrap();
+    assert!(initial.ok);
+    assert_eq!(initial.storage.event_count, 0);
+    assert_eq!(initial.active_wait_count, 0);
+
+    let event = map(
+        Source::ClaudeCode,
+        "PreToolUse",
+        fixture("fixtures/claude/pre_tool_use_bash.json"),
+    )
+    .remove(0);
+    runtime.handle_event(event).unwrap();
+
+    let health = runtime.health().unwrap();
+    assert!(health.ok);
+    assert_eq!(health.storage.event_count, 1);
+    assert_eq!(health.active_wait_count, 1);
+    assert!(health.storage.last_event_timestamp_ms.is_some());
+}
+
+#[test]
+fn file_store_persists_sanitized_events_without_raw_sensitive_values() {
+    let temp = TempDir::new().unwrap();
+    let db = temp.path().join("events.sqlite3");
+    let store = EventStore::open(&db).unwrap();
+    let mut runtime = EventRuntime::new(store);
+    let event = map(
+        Source::ClaudeCode,
+        "PreToolUse",
+        fixture("fixtures/claude/pre_tool_use_bash.json"),
+    )
+    .remove(0);
+    let event_id = event.id.clone();
+
+    runtime.handle_event(event).unwrap();
+    let store = EventStore::open(&db).unwrap();
+
+    assert_eq!(store.event_count().unwrap(), 1);
+    assert!(store.event_exists(&event_id).unwrap());
+    assert!(store.event_payload_contains("pytest").unwrap());
+    assert!(!store.event_payload_contains("private_customer").unwrap());
+    assert!(!store.event_payload_contains("--token").unwrap());
+    assert!(!store.event_payload_contains("/Users/mani").unwrap());
 }
 
 #[test]
@@ -471,6 +525,56 @@ fn shell_events_correlate_by_session_id() {
     assert!(finished.action.message.contains("finished in 12s"));
 }
 
+#[tokio::test]
+async fn delivery_falls_back_to_http_when_unix_socket_is_absent() {
+    let temp = TempDir::new().unwrap();
+    let missing_socket = temp.path().join("missing.sock");
+    let (addr, server) = one_shot_http_response("200 OK", r#"{"ok":true}"#).await;
+    let event = map_hook(HookInput {
+        source: Source::Codex,
+        surface: Surface::Cli,
+        event_name: "PreToolUse".to_string(),
+        command: Some("pnpm test".to_string()),
+        cwd: Some("/tmp/project".to_string()),
+        session_id: Some("transport-fallback".to_string()),
+        exit_code: None,
+        duration_ms: None,
+        raw: serde_json::json!({"tool_name": "Bash"}),
+    })
+    .remove(0);
+
+    let report = send_event_to_endpoints(&missing_socket, &addr, &event)
+        .await
+        .unwrap();
+
+    assert_eq!(report.channel, DeliveryChannel::Http);
+    assert!(report.endpoint.ends_with("/v1/events"));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn http_delivery_rejects_non_success_response() {
+    let (addr, server) =
+        one_shot_http_response("500 Internal Server Error", r#"{"ok":false}"#).await;
+    let event = map_hook(HookInput {
+        source: Source::Shell,
+        surface: Surface::Cli,
+        event_name: "shell_started".to_string(),
+        command: Some("sleep 12".to_string()),
+        cwd: Some("/tmp/project".to_string()),
+        session_id: Some("transport-500".to_string()),
+        exit_code: None,
+        duration_ms: None,
+        raw: serde_json::json!({}),
+    })
+    .remove(0);
+
+    let error = send_event_http_addr(&addr, &event).await.unwrap_err();
+
+    assert!(error.to_string().contains("500"));
+    server.await.unwrap();
+}
+
 #[test]
 fn hook_binary_accepts_command_stdin_for_shell_events() {
     let bin = std::env::var("CARGO_BIN_EXE_whileitthinks-hook")
@@ -511,4 +615,220 @@ fn hook_binary_accepts_command_stdin_for_shell_events() {
         events[0].command.as_deref(),
         Some("pytest tests/private.py --token secret")
     );
+}
+
+#[test]
+fn hook_binary_fails_open_when_receiver_is_unavailable() {
+    let temp = TempDir::new().unwrap();
+    let bin = bin_path("whileitthinks-hook");
+    let unavailable_http_addr = free_loopback_addr();
+    let mut child = Command::new(bin)
+        .args([
+            "--source",
+            "shell",
+            "--surface",
+            "cli",
+            "--event",
+            "shell_started",
+            "--cwd",
+            "/tmp/project",
+            "--session-id",
+            "shell-session-no-daemon",
+            "--command-stdin",
+            "--verbose",
+        ])
+        .env("WHILEITTHINKS_SOCKET", temp.path().join("missing.sock"))
+        .env("WHILEITTHINKS_HTTP_ADDR", unavailable_http_addr)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"sleep 12")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("send failed"));
+}
+
+#[test]
+fn daemon_smoke_commands_persist_claude_codex_and_shell_events() {
+    let temp = TempDir::new().unwrap();
+    let db = temp.path().join("events.sqlite3");
+    let socket = temp.path().join("whileitthinks.sock");
+    let http_addr = free_loopback_addr();
+    let daemon_bin = bin_path("whileitthinksd");
+    let cli_bin = bin_path("whileitthinks");
+    let mut daemon = Command::new(&daemon_bin)
+        .args([
+            "--database",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "--http",
+            &http_addr,
+        ])
+        .env("HOME", temp.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    wait_for_receiver(&socket, &http_addr);
+
+    for (source, event, command) in [
+        (
+            "claude-code",
+            "shell_started",
+            "pytest tests/private_customer.py --token secret",
+        ),
+        ("codex", "shell_started", "pnpm test -- --grep private"),
+        ("shell", "shell_started", "sleep 12"),
+    ] {
+        let output = Command::new(&cli_bin)
+            .args([
+                "test-event",
+                "--source",
+                source,
+                "--event",
+                event,
+                "--command",
+                command,
+            ])
+            .env("HOME", temp.path())
+            .env("WHILEITTHINKS_SOCKET", &socket)
+            .env("WHILEITTHINKS_HTTP_ADDR", &http_addr)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "test-event failed for {source}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("\"delivered\""));
+    }
+
+    wait_for_event_count(&db, 3);
+    let store = EventStore::open(&db).unwrap();
+    assert_eq!(store.event_count().unwrap(), 3);
+    assert_eq!(
+        store
+            .event_count_by_source(&serde_json::to_string(&Source::ClaudeCode).unwrap())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .event_count_by_source(&serde_json::to_string(&Source::Codex).unwrap())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .event_count_by_source(&serde_json::to_string(&Source::Shell).unwrap())
+            .unwrap(),
+        1
+    );
+    assert!(store.event_payload_contains("pytest").unwrap());
+    assert!(!store.event_payload_contains("private_customer").unwrap());
+    assert!(!store.event_payload_contains("--token").unwrap());
+
+    let health = get_health(&http_addr);
+    assert!(health.contains("\"ok\":true"));
+    assert!(health.contains("\"event_count\":3"));
+
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+}
+
+async fn one_shot_http_response(
+    status: &'static str,
+    body: &'static str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0_u8; 2048];
+        let _ = stream.read(&mut buffer).await.unwrap();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.shutdown().await.unwrap();
+    });
+    (addr, server)
+}
+
+fn bin_path(name: &str) -> String {
+    std::env::var(format!("CARGO_BIN_EXE_{name}"))
+        .unwrap_or_else(|_| format!("target/debug/{name}"))
+}
+
+fn free_loopback_addr() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    drop(listener);
+    addr
+}
+
+fn wait_for_receiver(socket: &Path, http_addr: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if socket.exists() && get_health_maybe(http_addr).is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("receiver did not become healthy at {http_addr}");
+}
+
+fn wait_for_event_count(db: &Path, expected: i64) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if db.exists() {
+            if let Ok(store) = EventStore::open(db) {
+                if store.event_count().unwrap_or_default() >= expected {
+                    return;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let count = EventStore::open(db)
+        .and_then(|store| store.event_count())
+        .unwrap_or_default();
+    panic!("expected at least {expected} events, found {count}");
+}
+
+fn get_health(http_addr: &str) -> String {
+    get_health_maybe(http_addr).unwrap_or_else(|| panic!("health check failed at {http_addr}"))
+}
+
+fn get_health_maybe(http_addr: &str) -> Option<String> {
+    let mut stream = TcpStream::connect(http_addr).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .ok()?;
+    write!(
+        stream,
+        "GET /health HTTP/1.1\r\nHost: {http_addr}\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut response = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut response).ok()?;
+    if response.starts_with("HTTP/1.1 200") {
+        Some(response)
+    } else {
+        None
+    }
 }

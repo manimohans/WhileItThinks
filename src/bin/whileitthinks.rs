@@ -165,8 +165,14 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             for event in events {
-                send_event(&event).await.ok();
-                println!("{}", serde_json::to_string_pretty(&event)?);
+                let delivery = send_event(&event).await?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "delivered": delivery,
+                        "event": event,
+                    }))?
+                );
             }
         }
     }

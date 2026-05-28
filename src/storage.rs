@@ -2,12 +2,20 @@ use std::path::Path;
 
 use anyhow::Context;
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 
 use crate::sanitize::SanitizedEvent;
 use crate::wait_state::WaitAction;
 
 pub struct EventStore {
     conn: Connection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageHealth {
+    pub ok: bool,
+    pub event_count: i64,
+    pub last_event_timestamp_ms: Option<i64>,
 }
 
 impl EventStore {
@@ -64,6 +72,79 @@ impl EventStore {
         Ok(())
     }
 
+    pub fn health(&self) -> anyhow::Result<StorageHealth> {
+        let quick_check: String = self
+            .conn
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))
+            .context("run sqlite quick_check")?;
+        let event_count = self.event_count()?;
+        let last_event_timestamp_ms = self
+            .conn
+            .query_row("SELECT MAX(timestamp_ms) FROM events", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .context("read last event timestamp")?;
+
+        Ok(StorageHealth {
+            ok: quick_check.eq_ignore_ascii_case("ok"),
+            event_count,
+            last_event_timestamp_ms,
+        })
+    }
+
+    pub fn event_count(&self) -> anyhow::Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+            .context("count events")
+    }
+
+    pub fn event_count_by_source(&self, source_json: &str) -> anyhow::Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE source = ?1",
+                [source_json],
+                |row| row.get(0),
+            )
+            .with_context(|| format!("count events for source {source_json}"))
+    }
+
+    pub fn event_exists(&self, id: &str) -> anyhow::Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE id = ?1)",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|value| value != 0)
+            .with_context(|| format!("check event {id}"))
+    }
+
+    pub fn event_payload_contains(&self, needle: &str) -> anyhow::Result<bool> {
+        let pattern = format!("%{needle}%");
+        self.conn
+            .query_row(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM events
+                    WHERE project_hash LIKE ?1
+                       OR cwd_hash LIKE ?1
+                       OR session_hash LIKE ?1
+                       OR conversation_hash LIKE ?1
+                       OR generation_hash LIKE ?1
+                       OR tool_name LIKE ?1
+                       OR command_category LIKE ?1
+                       OR command_summary LIKE ?1
+                       OR raw_event_name LIKE ?1
+                       OR action_json LIKE ?1
+                )
+                "#,
+                [pattern],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|value| value != 0)
+            .with_context(|| format!("search sanitized event payloads for {needle}"))
+    }
+
     fn migrate(&self) -> anyhow::Result<()> {
         self.conn.execute_batch(
             r#"
@@ -89,6 +170,7 @@ impl EventStore {
             );
             CREATE INDEX IF NOT EXISTS idx_events_timestamp_ms ON events(timestamp_ms);
             CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_events_id ON events(id);
             "#,
         )?;
         Ok(())

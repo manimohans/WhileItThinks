@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
@@ -61,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_http_server(addr: SocketAddr, runtime: SharedRuntime) -> anyhow::Result<()> {
     let router = Router::new()
-        .route("/health", get(|| async { Json(json!({ "ok": true })) }))
+        .route("/health", get(handle_health))
         .route("/v1/events", post(handle_http_event))
         .with_state(runtime);
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -69,17 +70,40 @@ async fn run_http_server(addr: SocketAddr, runtime: SharedRuntime) -> anyhow::Re
     Ok(())
 }
 
+async fn handle_health(
+    State(runtime): State<SharedRuntime>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let runtime = runtime.lock().await;
+    match runtime.health() {
+        Ok(health) if health.ok => (StatusCode::OK, Json(json!(health))),
+        Ok(health) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!(health))),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": error.to_string() })),
+        ),
+    }
+}
+
 async fn handle_http_event(
     State(runtime): State<SharedRuntime>,
     Json(event): Json<WhileItThinksEvent>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
     let mut runtime = runtime.lock().await;
     match runtime.handle_event(event) {
         Ok(result) => {
             emit_result(&result);
-            Json(json!({ "ok": true }))
+            (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "action": result.action })),
+            )
         }
-        Err(error) => Json(json!({ "ok": false, "error": error.to_string() })),
+        Err(error) => {
+            emit_failure("http_event", &error);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": error.to_string() })),
+            )
+        }
     }
 }
 
@@ -104,25 +128,47 @@ async fn run_unix_server(socket: PathBuf, runtime: SharedRuntime) -> anyhow::Res
         let runtime = runtime.clone();
         tokio::spawn(async move {
             let mut buffer = Vec::with_capacity(4096);
-            if stream.read_to_end(&mut buffer).await.is_err() {
+            if let Err(error) = stream.read_to_end(&mut buffer).await {
+                emit_failure("unix_read", error);
                 return;
             }
             if buffer.len() > 1_048_576 {
+                emit_failure(
+                    "unix_payload_too_large",
+                    anyhow::anyhow!("payload was {} bytes", buffer.len()),
+                );
                 return;
             }
-            let Ok(event) = serde_json::from_slice::<WhileItThinksEvent>(&buffer) else {
-                return;
+            let event = match serde_json::from_slice::<WhileItThinksEvent>(&buffer) {
+                Ok(event) => event,
+                Err(error) => {
+                    emit_failure("unix_json", error);
+                    return;
+                }
             };
             let mut runtime = runtime.lock().await;
-            if let Ok(result) = runtime.handle_event(event) {
-                emit_result(&result);
+            match runtime.handle_event(event) {
+                Ok(result) => emit_result(&result),
+                Err(error) => emit_failure("unix_event", error),
             }
         });
     }
 }
 
+fn emit_failure(context: &str, error: impl std::fmt::Display) {
+    emit_json_line(&json!({
+        "ok": false,
+        "context": context,
+        "error": error.to_string(),
+    }));
+}
+
 fn emit_result(result: &RuntimeResult) {
-    let line = serde_json::to_string(result).unwrap_or_default();
+    emit_json_line(result);
+}
+
+fn emit_json_line(value: &impl serde::Serialize) {
+    let line = serde_json::to_string(value).unwrap_or_default();
 
     let path = actions_log_path();
     if let Some(parent) = path.parent() {
