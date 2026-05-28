@@ -1,8 +1,12 @@
-import { getInstallCount } from '$lib/server/installCounter';
+import { getInstallStatus } from '$lib/server/installCounter';
 import { json } from '@sveltejs/kit';
 
 export async function GET() {
+  const status = await getInstallStatus();
+
   return json({
-    count: await getInstallCount()
+    available: !status.isLimitReached,
+    count: status.count,
+    limit: status.limit
   });
 }

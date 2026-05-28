@@ -1,7 +1,11 @@
-import { getInstallCount } from '$lib/server/installCounter';
+import { getInstallStatus } from '$lib/server/installCounter';
 
 export async function load() {
+  const status = await getInstallStatus();
+
   return {
-    installCount: await getInstallCount()
+    installCount: status.count,
+    installLimit: status.limit,
+    isLimitReached: status.isLimitReached
   };
 }

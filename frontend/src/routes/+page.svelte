@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
 
   const siteUrl = 'https://whileitthinks.com';
+  let { data }: { data: PageData } = $props();
 
   const workflowStates = [
     {
@@ -74,31 +75,34 @@
     }
   ];
 
-  const softwareJsonLd = JSON.stringify({
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'WhileItThinks',
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'macOS 14+',
-    url: siteUrl,
-    downloadUrl: `${siteUrl}/downloads/WhileItThinks-0.1.0.dmg`,
-    description:
-      'WhileItThinks is a local-first macOS app that gives developers break and return cues while Claude Code and Codex are busy.',
-    offers: {
-      '@type': 'Offer',
-      priceCurrency: 'USD',
-      price: '0',
-      availability: 'https://schema.org/InStock',
+  let softwareJsonLd = $derived(
+    JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'WhileItThinks',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'macOS 14+',
+      url: siteUrl,
+      downloadUrl: `${siteUrl}/download/app`,
       description:
-        'Lifetime license with launch pricing: first 1,000 installs are free, then pricing increases by $1 every 1,000 installs.'
-    },
-    featureList: [
-      'Claude Code wait-state cues',
-      'Codex wait-state cues',
-      'Local macOS receiver',
-      'Sanitized local metadata storage'
-    ]
-  }).replace(/</g, '\\u003c');
+        'WhileItThinks is a local-first macOS app that gives developers break and return cues while Claude Code and Codex are busy.',
+      offers: {
+        '@type': 'Offer',
+        priceCurrency: 'USD',
+        price: '0',
+        availability: data.isLimitReached
+          ? 'https://schema.org/SoldOut'
+          : 'https://schema.org/InStock',
+        description: `Lifetime license with launch pricing: first ${data.installLimit.toLocaleString()} installs are free, then pricing increases by $1 every 1,000 installs.`
+      },
+      featureList: [
+        'Claude Code wait-state cues',
+        'Codex wait-state cues',
+        'Local macOS receiver',
+        'Sanitized local metadata storage'
+      ]
+    }).replace(/</g, '\\u003c')
+  );
 
   const faqJsonLd = JSON.stringify({
     '@context': 'https://schema.org',
@@ -113,15 +117,15 @@
     }))
   }).replace(/</g, '\\u003c');
 
-  const structuredDataHead =
+  let structuredDataHead = $derived(
     '<scr' +
-    `ipt type="application/ld+json">${softwareJsonLd}</scr` +
-    'ipt><scr' +
-    `ipt type="application/ld+json">${faqJsonLd}</scr` +
-    'ipt>';
+      `ipt type="application/ld+json">${softwareJsonLd}</scr` +
+      'ipt><scr' +
+      `ipt type="application/ld+json">${faqJsonLd}</scr` +
+      'ipt>'
+  );
 
   let activeState = $state(0);
-  let { data }: { data: PageData } = $props();
 
   onMount(() => {
     const interval = window.setInterval(() => {
@@ -190,7 +194,9 @@
       </p>
 
       <div class="hero-actions" aria-label="Primary actions">
-        <a class="button button-primary" href="/download">Download free launch build</a>
+        <a class="button button-primary" href="/download">
+          {data.isLimitReached ? 'View download status' : 'Download free launch build'}
+        </a>
         <a class="button button-secondary" href="#workflow">See how it works</a>
       </div>
 
@@ -306,12 +312,21 @@
       <p class="eyebrow">Launch pricing</p>
       <h2 id="pricing-title">Start free. Keep the license for life.</h2>
       <p>
-        <strong>{data.installCount.toLocaleString()} installs claimed.</strong> The first 1,000
-        installs are free. After that, the lifetime license price increases by $1 every 1,000
-        installs: $0.99, $1.99, $2.99, and so on.
+        {#if data.isLimitReached}
+          <strong>All {data.installLimit.toLocaleString()} free installs are claimed.</strong>
+          Downloads are paused until paid checkout is ready.
+        {:else}
+          <strong>
+            {data.installCount.toLocaleString()} of {data.installLimit.toLocaleString()} free
+            installs claimed.
+          </strong>
+          After that, downloads pause until paid checkout is ready.
+        {/if}
       </p>
     </div>
-    <a class="button button-primary" href="/download">Get the Mac app</a>
+    <a class="button button-primary" href="/download">
+      {data.isLimitReached ? 'View download status' : 'Get the Mac app'}
+    </a>
   </section>
 
   <section class="faq-section" id="faq" aria-labelledby="faq-title">

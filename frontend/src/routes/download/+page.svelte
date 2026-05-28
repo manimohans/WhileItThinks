@@ -2,7 +2,6 @@
   import type { PageData } from './$types';
 
   const siteUrl = 'https://whileitthinks.com';
-  const appDmgPath = '/downloads/WhileItThinks-0.1.0.dmg';
   const downloadPath = '/download/app';
   const checksumPath = '/downloads/WhileItThinks-0.1.0.dmg.sha256';
   let { data }: { data: PageData } = $props();
@@ -14,26 +13,31 @@
     'Enable Claude Code, Codex, or both from the app.'
   ];
 
-  const downloadJsonLd = JSON.stringify({
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'WhileItThinks',
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'macOS 14+',
-    url: `${siteUrl}/download`,
-    downloadUrl: `${siteUrl}${appDmgPath}`,
-    description:
-      'Download WhileItThinks, the local-first macOS app that gives break and return cues for Claude Code and Codex.',
-    offers: {
-      '@type': 'Offer',
-      priceCurrency: 'USD',
-      price: '0',
-      availability: 'https://schema.org/InStock'
-    }
-  }).replace(/</g, '\\u003c');
+  let downloadJsonLd = $derived(
+    JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'WhileItThinks',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'macOS 14+',
+      url: `${siteUrl}/download`,
+      downloadUrl: `${siteUrl}${downloadPath}`,
+      description:
+        'Download WhileItThinks, the local-first macOS app that gives break and return cues for Claude Code and Codex.',
+      offers: {
+        '@type': 'Offer',
+        priceCurrency: 'USD',
+        price: '0',
+        availability: data.isLimitReached
+          ? 'https://schema.org/SoldOut'
+          : 'https://schema.org/InStock'
+      }
+    }).replace(/</g, '\\u003c')
+  );
 
-  const structuredDataHead =
-    '<scr' + `ipt type="application/ld+json">${downloadJsonLd}</scr` + 'ipt>';
+  let structuredDataHead = $derived(
+    '<scr' + `ipt type="application/ld+json">${downloadJsonLd}</scr` + 'ipt>'
+  );
 </script>
 
 <svelte:head>
@@ -74,25 +78,38 @@
       <p class="eyebrow">Download for macOS</p>
       <h1 id="download-title">Get the launch build.</h1>
       <p>
-        WhileItThinks gives developers a local break and return cue while Claude Code and Codex are
-        busy. The first 1,000 installs are free.
+        {#if data.isLimitReached}
+          The first {data.installLimit.toLocaleString()} free launch installs are claimed. Downloads
+          are paused until paid checkout is ready.
+        {:else}
+          WhileItThinks gives developers a local break and return cue while Claude Code and Codex are
+          busy. The first {data.installLimit.toLocaleString()} installs are free.
+        {/if}
       </p>
       <p class="install-count">
         <span>{data.installCount.toLocaleString()}</span>
         launch installs claimed
       </p>
       <div class="download-actions">
-        <a class="button button-primary" href={downloadPath} rel="nofollow">Download DMG</a>
+        {#if data.isLimitReached}
+          <button class="button button-primary" type="button" disabled>Download paused</button>
+        {:else}
+          <a class="button button-primary" href={downloadPath} rel="nofollow">Download DMG</a>
+        {/if}
         <a class="button button-secondary" href={checksumPath}>View checksum</a>
       </div>
     </div>
 
     <div class="license-card" aria-label="Launch pricing">
       <span>Lifetime license</span>
-      <strong>First 1,000 installs: free</strong>
+      <strong>First {data.installLimit.toLocaleString()} installs: free</strong>
       <p>
-        {data.installCount.toLocaleString()} installs claimed. Then pricing steps up by $1 every
-        1,000 installs: $0.99, $1.99, $2.99, and so on.
+        {#if data.isLimitReached}
+          Downloads are paused until the paid checkout is ready.
+        {:else}
+          {data.installCount.toLocaleString()} installs claimed. Downloads pause at
+          {data.installLimit.toLocaleString()} until paid checkout is ready.
+        {/if}
       </p>
     </div>
   </section>
@@ -256,6 +273,17 @@
     line-height: 1;
     text-align: center;
     box-shadow: 5px 5px 0 var(--shadow);
+  }
+
+  button.button {
+    cursor: default;
+    font: inherit;
+  }
+
+  .button:disabled {
+    background: var(--surface);
+    color: var(--muted);
+    opacity: 0.72;
   }
 
   .button-primary {
