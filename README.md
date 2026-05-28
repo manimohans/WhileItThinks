@@ -32,6 +32,14 @@ Build the local macOS app bundle:
 scripts/build-app.sh
 ```
 
+Create a downloadable DMG for testers:
+
+```bash
+scripts/package-dmg.sh
+```
+
+That writes `dist/WhileItThinks-0.1.0.dmg` and a matching `.sha256` checksum. The DMG contains `WhileItThinks.app`, an `Applications` shortcut, and a short install note.
+
 Install it where hook paths stay stable:
 
 ```bash
@@ -196,6 +204,22 @@ Build the full app bundle:
 ```bash
 scripts/build-app.sh
 ```
+
+Build a DMG:
+
+```bash
+scripts/package-dmg.sh
+```
+
+For a low-friction public download, sign and notarize it with an Apple Developer ID certificate:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+NOTARY_PROFILE="whileitthinks-notary" \
+scripts/package-dmg.sh
+```
+
+Without `SIGN_IDENTITY` and `NOTARY_PROFILE`, the DMG is fine for local/private testing, but macOS Gatekeeper may warn external testers because it is not notarized.
 
 Verify the bundle:
 
